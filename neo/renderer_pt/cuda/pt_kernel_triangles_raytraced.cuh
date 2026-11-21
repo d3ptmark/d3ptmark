@@ -278,8 +278,7 @@ __global__ void TriangleDrawRayTracedKernel(
 		}
 
 		// lit noshadows decal overlays — blend over and continue
-		if (mat.noShadows && !mat.isAmbientOnly && mat.alphaTest == 0.0f
-			&& mat.transmission == 0.0f && mat.blendMode == 0 && alphaSkips < MAX_ALPHA_SKIPS) {
+		if (PT_IsLitDecal(mat) && alphaSkips < MAX_ALPHA_SKIPS) {
 			float lum = albR * 0.2126f + albG * 0.7152f + albB * 0.0722f;
 			float decalAlpha = (lum < 0.02f) ? 0.0f : alpha;
 
@@ -304,9 +303,10 @@ __global__ void TriangleDrawRayTracedKernel(
 		if (mat.isAmbientOnly && alphaSkips < MAX_ALPHA_SKIPS) {
 			if (mat.blendMode == 2) {
 				// additive
-				colorR += throughR * albR * alpha * emissionBoost;
-				colorG += throughG * albG * alpha * emissionBoost;
-				colorB += throughB * albB * alpha * emissionBoost;
+				const float weight = PT_AdditiveOpacity(mat, alpha) * emissionBoost;
+				colorR += throughR * albR * weight;
+				colorG += throughG * albG * weight;
+				colorB += throughB * albB * weight;
 			} else if (mat.blendMode == 3) {
 				// modulate
 				throughR *= albR;
@@ -332,9 +332,10 @@ __global__ void TriangleDrawRayTracedKernel(
 
 		// additive blending (non-ambient)
 		if (mat.blendMode == 2 && alphaSkips < MAX_ALPHA_SKIPS) {
-			colorR += throughR * albR * alpha;
-			colorG += throughG * albG * alpha;
-			colorB += throughB * albB * alpha;
+			const float weight = PT_AdditiveOpacity(mat, alpha);
+			colorR += throughR * albR * weight;
+			colorG += throughG * albG * weight;
+			colorB += throughB * albB * weight;
 
 			rayOrigX = pX + rayDirX * biasOffset;
 			rayOrigY = pY + rayDirY * biasOffset;

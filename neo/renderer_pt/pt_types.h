@@ -71,6 +71,14 @@ enum ptToneMap_t {
 	PT_TONEMAP_UNCHARTED2	= 2
 };
 
+#ifdef PT_PHYSICAL
+enum ptPhysicalMaterialSource_t {
+	PT_PHYSICAL_LEGACY = 0,
+	PT_PHYSICAL_AUTHORED = 1,
+	PT_PHYSICAL_CALIBRATED = 2
+};
+#endif
+
 typedef struct {
 	float position[3];
 	float normal[3];
@@ -109,6 +117,8 @@ typedef struct {
 	int useVertexColor;
 	int isAmbientOnly;			// no interaction stages, rendered as unlit overlay
 	int noShadows;				// does not cast shadows
+	int decalOverlay;			// authored lit overlay, not inferred from noShadows alone
+	int additiveUsesAlpha;		// SRC_ALPHA + ONE, unlike ONE + ONE
 	int albedoTexture;			// texture index or -1
 	int normalTexture;
 	int specularTexture;
@@ -117,7 +127,8 @@ typedef struct {
 	float texTransform[6];		// affine transform: u'=x0*u+x1*v+x2, v'=x3*u+x4*v+x5
 	float polygonOffset;		// depth bias for decals
 #ifdef PT_PHYSICAL
-	int physicalMaterial;		// explicit ptMaterial block, never inferred from alpha
+	int physicalMaterial;		// ptPhysicalMaterialSource_t; never inferred from alpha alone
+	int emissiveOverlay;		// unlit FX radiance uses physical emission calibration
 	int thinTransmission;		// 0 solid dielectric, 1 thin glass, 2 diffuse sheet
 	float absorption[3];		// Beer-Lambert absorption coefficients in inverse meters
 	float thickness;			// thin sheet thickness in meters

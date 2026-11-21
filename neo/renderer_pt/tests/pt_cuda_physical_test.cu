@@ -186,13 +186,15 @@ static void CheckPathIntegration() {
 		scene.light.color[c] = 1;
 	}
 	scene_t* device = NULL;
-	float *accumulation = NULL, *diffuse = NULL, *specular = NULL;
+	float *accumulation = NULL, *diffuse = NULL, *specular = NULL, *volume = NULL, *radiance = NULL;
 	ptCudaDenoiseGuide_t* guide = NULL;
 	CUDA_CHECK(cudaMalloc(&device, sizeof(scene)));
 	CUDA_CHECK(cudaMalloc(&accumulation, 4 * sizeof(float)));
 	CUDA_CHECK(cudaMemset(accumulation, 0, 4 * sizeof(float)));
 	CUDA_CHECK(cudaMalloc(&diffuse, 4 * sizeof(float)));
 	CUDA_CHECK(cudaMalloc(&specular, 4 * sizeof(float)));
+	CUDA_CHECK(cudaMalloc(&volume, 4 * sizeof(float)));
+	CUDA_CHECK(cudaMalloc(&radiance, 4 * sizeof(float)));
 	CUDA_CHECK(cudaMalloc(&guide, sizeof(*guide)));
 	CUDA_CHECK(cudaMemcpy(device, &scene, sizeof(scene), cudaMemcpyHostToDevice));
 	ptRenderParams_t p = PhysicalParams();
@@ -246,10 +248,37 @@ static void CheckPathIntegration() {
 		CUDA_CHECK(cudaMemcpy(result, accumulation, sizeof(result), cudaMemcpyDeviceToHost));
 		CheckNear("progressive fog extinction preserves residual emission", result[0], 50, 0.001);
 	}
+	p.frameIndex = 0;
+	p.physicalFogAlbedo = 0.8f;
+	p.physicalFogAnisotropy = 0.3f;
+	float v[4], fresh[4];
+	PathTracingKernel<<<1, 1>>>(device->vertices, &device->triangle, &device->node, &device->index, &device->material,
+		NULL, &device->light, 1, accumulation, p, radiance, guide, diffuse, specular, volume);
+	CUDA_CHECK(cudaGetLastError());
+	CUDA_CHECK(cudaMemcpy(result, accumulation, sizeof(result), cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpy(fresh, radiance, sizeof(fresh), cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpy(d, diffuse, sizeof(d), cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpy(s, specular, sizeof(s), cudaMemcpyDeviceToHost));
+	CUDA_CHECK(cudaMemcpy(v, volume, sizeof(v), cudaMemcpyDeviceToHost));
+	if (!std::isfinite(v[0]) || v[0] <= 0.0f) {
+		std::fprintf(stderr, "Physical volume decomposition must exercise nonzero scattering\n");
+		std::exit(1);
+	}
+	for (int c = 0; c < 3; c++) {
+		CheckNear("physical fog signal preserves attenuated primary emission", fresh[c] - d[c] - s[c] - v[c], 50, 0.001);
+		CheckNear("physical volume output preserves raw transport", fresh[c], result[c], 0);
+	}
+	PathTracingKernel<<<1, 1>>>(device->vertices, &device->triangle, &device->node, &device->index, &device->material,
+		NULL, &device->light, 1, accumulation, p);
+	CUDA_CHECK(cudaGetLastError());
+	CUDA_CHECK(cudaMemcpy(result, accumulation, sizeof(result), cudaMemcpyDeviceToHost));
+	for (int c = 0; c < 3; c++) CheckNear("physical signal extraction does not change random draws", fresh[c], result[c], 0);
 	CUDA_CHECK(cudaFree(device));
 	CUDA_CHECK(cudaFree(accumulation));
 	CUDA_CHECK(cudaFree(diffuse));
 	CUDA_CHECK(cudaFree(specular));
+	CUDA_CHECK(cudaFree(volume));
+	CUDA_CHECK(cudaFree(radiance));
 	CUDA_CHECK(cudaFree(guide));
 }
 

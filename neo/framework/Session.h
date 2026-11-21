@@ -155,6 +155,9 @@ public:
 	virtual const char *GetCurrentMapName( void ) = 0;
 
 	virtual int		GetSaveGameVersion( void ) = 0;
+#ifdef HAVE_PATHTRACER
+	virtual bool	StartPTBenchmarkDemo( const char *name ) = 0;
+#endif
 
 	// The render world and sound world used for this session.
 	idRenderWorld *	rw;

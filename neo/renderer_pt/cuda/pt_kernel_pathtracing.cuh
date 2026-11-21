@@ -376,7 +376,8 @@ __global__ void PathTracingKernel(
 	float* radianceBuffer = NULL,
 	ptCudaDenoiseGuide_t* guideBuffer = NULL,
 	float* diffuseBuffer = NULL,
-	float* specularBuffer = NULL
+	float* specularBuffer = NULL,
+	float* volumeBuffer = NULL
 ) {
 	PT_UNPACK_RENDER_PARAMS(params);
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -390,7 +391,7 @@ __global__ void PathTracingKernel(
 	PT_RngInit(&rng, (unsigned int)(y * width + x), params.sampleIndex);
 
 	float color[3] = { 0.0f, 0.0f, 0.0f };
-	float diffuseColor[3] = {}, specularColor[3] = {};
+	float diffuseColor[3] = {}, specularColor[3] = {}, volumeColor[3] = {};
 	ptCudaDenoiseGuide_t guide = {};
 
 	for (int sample = 0; sample < samplesPerPixel; sample++) {
@@ -503,7 +504,9 @@ __global__ void PathTracingKernel(
 			float materialIor = 0.0f;
 #ifdef PT_PHYSICAL
 			if (PT_PhysicalActive(&params)) {
-				materialIor = material.physicalMaterial ? material.ior : params.physicalIor;
+				materialIor = material.physicalMaterial == PT_PHYSICAL_AUTHORED
+					|| (material.physicalMaterial == PT_PHYSICAL_CALIBRATED && material.transmission > 0.0f)
+					? material.ior : params.physicalIor;
 			}
 #endif
 
@@ -593,7 +596,7 @@ __global__ void PathTracingKernel(
 
 			if (material.specularTexture >= 0 && textures
 #ifdef PT_PHYSICAL
-				&& !material.physicalMaterial
+				&& material.physicalMaterial != PT_PHYSICAL_AUTHORED
 #endif
 				) {
 				float specularMap[4];
@@ -646,7 +649,7 @@ __global__ void PathTracingKernel(
 				continue;  // transparent skip — does NOT increment depth
 			}
 
-			// Primary emission and volume remain residuals; only surface-scattered light is filtered.
+			// Primary emission stays sharp; surface and volume lighting are filtered separately.
 			if (guideBuffer && !guideWritten) {
 				guideWritten = true;
 				sampleGuide.coverage = material.blendMode != PT_BLEND_OPAQUE || material.transmission > 0.0f
@@ -682,8 +685,7 @@ __global__ void PathTracingKernel(
 			// ---------------------------------------------------------------
 			// Lit noshadows decal overlays
 			// ---------------------------------------------------------------
-			if (material.noShadows && !material.isAmbientOnly && material.alphaTest == 0.0f
-				&& material.transmission == 0.0f && material.blendMode == 0) {
+			if (PT_IsLitDecal(material)) {
 				float alpha = albedo[3];
 				float lum = albedo[0] * 0.2126f + albedo[1] * 0.7152f + albedo[2] * 0.0722f;
 				if (lum < 0.02f) alpha = 0.0f;
@@ -734,20 +736,23 @@ __global__ void PathTracingKernel(
 			// ---------------------------------------------------------------
 			if (material.isAmbientOnly) {
 				float alpha = albedo[3];
+				float overlayScale = 1.0f;
+#ifdef PT_PHYSICAL
+				if (PT_PhysicalActive(&params) && material.emissiveOverlay) overlayScale = emissionBoost;
+#endif
 
 				if (material.blendMode == 2) {
 					// additive
-					pathRadiance[0] += pathThroughput[0] * albedo[0] * alpha;
-					pathRadiance[1] += pathThroughput[1] * albedo[1] * alpha;
-					pathRadiance[2] += pathThroughput[2] * albedo[2] * alpha;
+					const float weight = PT_AdditiveOpacity(material, alpha) * overlayScale;
+					for (int c = 0; c < 3; c++) pathRadiance[c] += pathThroughput[c] * albedo[c] * weight;
 				} else if (PT_IsModulation(material.blendMode)) {
 					// modulate
 					for (int c = 0; c < 3; c++) pathThroughput[c] *= PT_ModulationFactor(albedo[c], material.blendMode);
 				} else {
 					// default alpha-over
-					pathRadiance[0] += pathThroughput[0] * albedo[0] * alpha;
-					pathRadiance[1] += pathThroughput[1] * albedo[1] * alpha;
-					pathRadiance[2] += pathThroughput[2] * albedo[2] * alpha;
+					pathRadiance[0] += pathThroughput[0] * albedo[0] * alpha * overlayScale;
+					pathRadiance[1] += pathThroughput[1] * albedo[1] * alpha * overlayScale;
+					pathRadiance[2] += pathThroughput[2] * albedo[2] * alpha * overlayScale;
 					pathThroughput[0] *= (1.0f - alpha);
 					pathThroughput[1] *= (1.0f - alpha);
 					pathThroughput[2] *= (1.0f - alpha);
@@ -764,9 +769,8 @@ __global__ void PathTracingKernel(
 			// Additive blending
 			// ---------------------------------------------------------------
 			if (material.blendMode == 2) {
-				pathRadiance[0] += pathThroughput[0] * albedo[0] * albedo[3];
-				pathRadiance[1] += pathThroughput[1] * albedo[1] * albedo[3];
-				pathRadiance[2] += pathThroughput[2] * albedo[2] * albedo[3];
+				const float weight = PT_AdditiveOpacity(material, albedo[3]);
+				for (int c = 0; c < 3; c++) pathRadiance[c] += pathThroughput[c] * albedo[c] * weight;
 				ray.origin[0] = hitInfo.position[0] + ray.direction[0] * rayOffset;
 				ray.origin[1] = hitInfo.position[1] + ray.direction[1] * rayOffset;
 				ray.origin[2] = hitInfo.position[2] + ray.direction[2] * rayOffset;
@@ -1185,6 +1189,7 @@ __global__ void PathTracingKernel(
 			}
 			diffuseColor[c] += sampleDiffuse[c];
 			specularColor[c] += sampleSpecular[c];
+			volumeColor[c] += volumeRadiance[c];
 		}
 		if (guideBuffer) {
 			if (sample == 0) {
@@ -1236,11 +1241,14 @@ __global__ void PathTracingKernel(
 			? color[c] / (unclampedColor[c] * samplesPerPixel) : 0.0f;
 		const float diffuse = fminf(color[c], fmaxf(0.0f, diffuseColor[c] * scale));
 		const float specular = fminf(fmaxf(0.0f, color[c] - diffuse), fmaxf(0.0f, specularColor[c] * scale));
+		const float volume = fminf(fmaxf(0.0f, color[c] - diffuse - specular), fmaxf(0.0f, volumeColor[c] * scale));
 		if (diffuseBuffer) diffuseBuffer[pixelIndex + c] = diffuse;
 		if (specularBuffer) specularBuffer[pixelIndex + c] = specular;
+		if (volumeBuffer) volumeBuffer[pixelIndex + c] = volume;
 	}
 	if (diffuseBuffer) diffuseBuffer[pixelIndex + 3] = 1.0f;
 	if (specularBuffer) specularBuffer[pixelIndex + 3] = 1.0f;
+	if (volumeBuffer) volumeBuffer[pixelIndex + 3] = 1.0f;
 	if (guideBuffer) {
 		if (guide.depth > 0.0f) {
 			for (int c = 0; c < 3; c++) {

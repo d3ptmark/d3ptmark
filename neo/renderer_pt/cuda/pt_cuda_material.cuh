@@ -39,9 +39,19 @@ __device__ __forceinline__ void PT_ApplyVertexColor(
 	const ptVertex_t& v1 = vertices[tri.vertexIndices[1]];
 	const ptVertex_t& v2 = vertices[tri.vertexIndices[2]];
 	for (int c = 0; c < 4; c++) {
-		const float vertexColor = w * v0.color[c] + u * v1.color[c] + v * v2.color[c];
+		float vertexColor = w * v0.color[c] + u * v1.color[c] + v * v2.color[c];
+		if (material.useVertexColor == 2) vertexColor = 1.0f - vertexColor;
 		color[c] *= c < 3 ? PT_SrgbToLinear(vertexColor) : vertexColor;
 	}
+}
+
+__device__ inline bool PT_IsLitDecal(const ptMaterial_t& material) {
+	return material.decalOverlay && !material.isAmbientOnly && material.alphaTest == 0.0f
+		&& material.transmission == 0.0f && material.blendMode == PT_BLEND_OPAQUE;
+}
+
+__device__ inline float PT_AdditiveOpacity(const ptMaterial_t& material, float alpha) {
+	return material.additiveUsesAlpha ? alpha : 1.0f;
 }
 
 /*

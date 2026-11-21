@@ -1,6 +1,10 @@
 #include "sys/platform.h"
 #include "renderer/tr_local.h"
 #include "renderer_pt/pt_scene.h"
+#ifdef PT_PHYSICAL
+#include "renderer_pt/pt_material_editor.h"
+#include "renderer_pt/pt_material_profiles.h"
+#endif
 
 /*
 ===============================================================================
@@ -120,28 +124,6 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
         mat.noShadows = 1;
     }
 
-    // detect vertex color usage from stages (particles use per-vertex alpha for opacity)
-    for (int i = 0; i < material->GetNumStages(); i++) {
-        const shaderStage_t* stage = material->GetStage(i);
-        if (stage && (stage->vertexColor == SVC_MODULATE || stage->vertexColor == SVC_INVERSE_MODULATE)) {
-            mat.useVertexColor = 1;
-            break;
-        }
-    }
-
-    // check if material is ambient-only (no diffuse/bump/specular interaction stages)
-    bool hasInteraction = false;
-    for (int i = 0; i < material->GetNumStages(); i++) {
-        const shaderStage_t* stage = material->GetStage(i);
-        if (stage && (stage->lighting == SL_DIFFUSE || stage->lighting == SL_BUMP || stage->lighting == SL_SPECULAR)) {
-            hasInteraction = true;
-            break;
-        }
-    }
-    if (!hasInteraction && material->GetNumStages() > 0) {
-        mat.isAmbientOnly = 1;
-    }
-
     // resolve registers: constant materials carry their own, animated ones use the
     // entity's evaluated registers; fall back to 1.0 when none are available
     const float *regs = material->ConstantRegisters();
@@ -153,6 +135,9 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
     // safe register lookup helper macro
     #define SAFE_REG(regIdx) ((regs && (regIdx) >= 0 && (regIdx) < numRegs) ? regs[regIdx] : 1.0f)
 
+    mat.decalOverlay = mat.noShadows && ( material->GetSort() == SS_DECAL
+        || material->TestMaterialFlag( MF_POLYGONOFFSET ) || cov == MC_TRANSLUCENT );
+    if ( material->TestMaterialFlag( MF_POLYGONOFFSET ) ) mat.polygonOffset = material->GetPolygonOffset();
     // extract textures
     const shaderStage_t *ambientBaseStage = NULL;   // first non-additive ambient stage
     const shaderStage_t *ambientGlowStage = NULL;   // first additive ambient stage
@@ -161,10 +146,13 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
     const shaderStage_t *normalStage = NULL;
     const shaderStage_t *specularStage = NULL;
     const shaderStage_t *albedoTextureStage = NULL;
+    bool hasActiveStage = false;
 
     for (int i = 0; i < material->GetNumStages(); i++) {
         const shaderStage_t* stage = material->GetStage(i);
 		if (!stage) continue;
+        if ( SAFE_REG( stage->conditionRegister ) == 0 ) continue;
+        hasActiveStage = true;
 
         // skip fragment program stages
         if (stage->newStage) {
@@ -200,7 +188,8 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
                     break;
                 }
 
-                bool stageIsAdd = (blendBits == (GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE));
+                bool stageIsAdd = (blendBits == (GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE))
+                    || (blendBits == (GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE));
                 if (stageIsAdd) {
                     if (!ambientGlowStage) ambientGlowStage = stage;
                 } else {
@@ -230,6 +219,27 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
             default:
                 break;
         }
+    }
+
+    mat.isAmbientOnly = !( diffuseStage || normalStage || specularStage );
+#ifdef PT_PHYSICAL
+    physicalMaterialInfo_t physical = material->GetPhysicalMaterial();
+    const ptMaterialProfile_t profile = R_PT_MaterialProfile( material );
+    const ptMaterialOverride_t *overrideValue = R_PT_MaterialOverride( material->GetName() );
+    const bool physicalSurface = hasActiveStage && ( physical.enabled || profile.label || overrideValue );
+#else
+    const bool physicalSurface = false;
+    (void)hasActiveStage;
+#endif
+    if ( !diffuseStage && !ambientBaseStage && !ambientGlowStage && !physicalSurface ) {
+        // Alpha-write-only and unsupported stages do not supply visible PT color.
+        if ( r_ptDebug.GetBool() ) {
+            common->Printf( "  %s: no active supported color stage; transparent overlay\n", material->GetName() );
+        }
+        mat.isAmbientOnly = 1;
+        mat.albedo[0] = mat.albedo[1] = mat.albedo[2] = mat.albedo[3] = 0;
+        mat.blendMode = PT_BLEND_ALPHA;
+        return;
     }
 
     bool hasDiffuse = (diffuseStage != NULL);
@@ -306,7 +316,6 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
     // for materials with NO diffuse stage
     if (!hasDiffuse && mat.albedoTexture < 0) {
         const shaderStage_t *albedoSource = ambientBaseStage;
-        if (!albedoSource) albedoSource = ambientMaskStage;
         if (!albedoSource) albedoSource = ambientGlowStage;
 
         if (albedoSource && albedoSource->texture.image) {
@@ -419,6 +428,11 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
         mat.texTransform[4] = SAFE_REG(matrix[1][1]);
         mat.texTransform[5] = SAFE_REG(matrix[1][2]);
     }
+    if ( albedoTextureStage ) {
+        mat.useVertexColor = albedoTextureStage->vertexColor == SVC_MODULATE ? 1
+            : albedoTextureStage->vertexColor == SVC_INVERSE_MODULATE ? 2 : 0;
+        mat.additiveUsesAlpha = ( albedoTextureStage->drawStateBits & GLS_SRCBLEND_BITS ) == GLS_SRCBLEND_SRC_ALPHA;
+    }
 
     // colors are multiplied in gamma space by the GL renderer, decode every
     // factor so that the product encoded with r_ptGamma 2.2 matches it
@@ -429,9 +443,35 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
     emission.Set( mat.emission[0], mat.emission[1], mat.emission[2] );
 
 #ifdef PT_PHYSICAL
-    const physicalMaterialInfo_t &physical = material->GetPhysicalMaterial();
+    idStr effectName = material->GetName();
+    effectName.ToLower();
+    const bool fxMaterial = !effectName.Icmpn( "textures/particles/", 19 )
+        || !effectName.Icmpn( "textures/sfx/", 13 ) || !effectName.Icmpn( "models/weapons/", 15 );
+    const bool luminousFx = fxMaterial && ( effectName.Find( "flame" ) >= 0 || effectName.Find( "mflash" ) >= 0
+        || effectName.Find( "spark" ) >= 0 || effectName.Find( "fire" ) >= 0 );
+    mat.emissiveOverlay = mat.isAmbientOnly && ( mat.blendMode == PT_BLEND_ADD
+        || ( luminousFx && mat.blendMode == PT_BLEND_ALPHA ) );
+    const bool calibrated = profile.label && !overrideValue;
+    if ( !overrideValue && profile.label ) overrideValue = &profile.value;
+    // Untextured conductors need linear reflectance, not the gray diffuse fallback.
+    if ( overrideValue && mat.albedoTexture < 0 ) {
+        for ( int c = 0; c < 3; c++ ) mat.albedo[c] += ( 0.6f - mat.albedo[c] ) * overrideValue->metallic;
+    }
+    if ( overrideValue ) {
+        physical.enabled = true;
+        physical.metallic = overrideValue->metallic;
+        physical.roughness = overrideValue->roughness;
+        physical.transmission = overrideValue->transmission;
+        physical.ior = overrideValue->ior;
+        physical.thin = (int)overrideValue->thin;
+        physical.thickness = overrideValue->thickness;
+        for ( int c = 0; c < 3; c++ ) {
+            physical.absorption[c] = overrideValue->absorption[c];
+            mat.albedo[c] *= overrideValue->tint[c];
+        }
+    }
     if ( physical.enabled ) {
-        mat.physicalMaterial = 1;
+        mat.physicalMaterial = calibrated ? PT_PHYSICAL_CALIBRATED : PT_PHYSICAL_AUTHORED;
         mat.transmission = physical.transmission;
         mat.ior = physical.ior;
         mat.thinTransmission = physical.thin;
@@ -439,14 +479,16 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
         for ( int c = 0; c < 3; c++ ) mat.absorption[c] = physical.absorption[c];
         if ( physical.roughness >= 0.0f ) mat.roughness = physical.roughness;
         if ( physical.metallic >= 0.0f ) mat.metallic = physical.metallic;
-        // Explicit transport replaces authored overlay compositing, not its texture.
+        // Physical transport replaces legacy overlay compositing, not its texture.
         mat.blendMode = PT_BLEND_OPAQUE;
         if ( mat.isAmbientOnly ) {
             mat.emission[0] = mat.emission[1] = mat.emission[2] = 0.0f;
             mat.emissionTexture = -1;
             emission.Zero();
         }
-        mat.isAmbientOnly = mat.noShadows = 0;
+        mat.isAmbientOnly = 0;
+        mat.decalOverlay = mat.emissiveOverlay = 0;
+        if ( !calibrated || physical.transmission > 0 ) mat.noShadows = 0;
     }
 #endif
 

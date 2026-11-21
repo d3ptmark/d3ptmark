@@ -11,9 +11,14 @@ __device__ inline float PT_DenoiseNormalDot(const ptCudaDenoiseGuide_t &a, const
 	return a.normal[0] * b.normal[0] + a.normal[1] * b.normal[1] + a.normal[2] * b.normal[2];
 }
 
-__device__ inline bool PT_DenoiseSameSurface(const ptCudaDenoiseGuide_t &a, const ptCudaDenoiseGuide_t &b) {
+__device__ inline bool PT_DenoiseSupported(const ptCudaDenoiseGuide_t &guide, int signal) {
+	return guide.depth > 0.0f || (signal == 2 && guide.coverage == PT_DENOISE_MISS);
+}
+
+__device__ inline bool PT_DenoiseSameSurface(const ptCudaDenoiseGuide_t &a, const ptCudaDenoiseGuide_t &b, int signal = 0) {
+	if (signal == 2 && a.depth <= 0.0f) return b.depth <= 0.0f && a.coverage == PT_DENOISE_MISS && b.coverage == PT_DENOISE_MISS;
 	return b.depth > 0.0f && fabsf(a.depth - b.depth) < fmaxf(0.01f, a.depth * 0.02f)
-		&& PT_DenoiseNormalDot(a, b) > 0.9f;
+		&& (signal == 2 || PT_DenoiseNormalDot(a, b) > 0.9f);
 }
 
 __device__ inline const float *PT_DenoiseReflectance(const ptCudaDenoiseGuide_t &guide, int signal) {
@@ -21,6 +26,10 @@ __device__ inline const float *PT_DenoiseReflectance(const ptCudaDenoiseGuide_t 
 }
 
 __device__ inline void PT_DenoiseIllumination(const float *radiance, const ptCudaDenoiseGuide_t &guide, float *color, int signal) {
+	if (signal == 2) {
+		for (int c = 0; c < 3; c++) color[c] = radiance[c];
+		return;
+	}
 	const float *reflectance = PT_DenoiseReflectance(guide, signal);
 	for (int c = 0; c < 3; c++) color[c] = radiance[c] / reflectance[c];
 }
@@ -75,7 +84,7 @@ __global__ void SVGFCaptureKernel(
 	mean[index + 3] = params.frameIndex == 0 ? sampleLum * sampleLum
 		: previousMean[index + 3] + (sampleLum * sampleLum - previousMean[index + 3]) * alpha;
 	const ptCudaDenoiseGuide_t &guide = guides[pixel];
-	if (guide.depth <= 0.0f) {
+	if (!PT_DenoiseSupported(guide, signal)) {
 		for (int c = 0; c < 3; c++) output[index + c] = mean[index + c];
 		output[index + 3] = 0.0f;
 		moments[index] = moments[index + 1] = moments[index + 2] = 0.0f;
@@ -84,7 +93,7 @@ __global__ void SVGFCaptureKernel(
 	}
 	PT_DenoiseIllumination(mean + index, guide, output + index, signal);
 	const float rawMean = PT_DenoiseLuminance(mean + index);
-	const float reflectance = fmaxf(0.01f, PT_DenoiseLuminance(PT_DenoiseReflectance(guide, signal)));
+	const float reflectance = signal == 2 ? 1.0f : fmaxf(0.01f, PT_DenoiseLuminance(PT_DenoiseReflectance(guide, signal)));
 	const float variance = fmaxf(0.0f, mean[index + 3] - rawMean * rawMean)
 		/ (fmaxf(1.0f, count - 1.0f) * reflectance * reflectance);
 	output[index + 3] = variance;
@@ -106,7 +115,7 @@ __global__ void SVGFTemporalKernel(
 	const int pixel = y * params.width + x;
 	const int index = pixel * 4;
 	const ptCudaDenoiseGuide_t &guide = guides[pixel];
-	if (guide.depth <= 0.0f) {
+	if (!PT_DenoiseSupported(guide, signal)) {
 		for (int c = 0; c < 3; c++) output[index + c] = radiance[index + c];
 		output[index + 3] = 0.0f;
 		for (int c = 0; c < 4; c++) moments[index + c] = 0.0f;
@@ -125,7 +134,7 @@ __global__ void SVGFTemporalKernel(
 			const int sx = x + dx, sy = y + dy;
 			if (sx < 0 || sx >= params.width || sy < 0 || sy >= params.height) continue;
 			const int neighbor = sy * params.width + sx;
-			if (!PT_DenoiseSameSurface(guide, guides[neighbor])) continue;
+			if (!PT_DenoiseSameSurface(guide, guides[neighbor], signal)) continue;
 			float color[3];
 			PT_DenoiseIllumination(radiance + neighbor * 4, guides[neighbor], color, signal);
 			const float lum = PT_DenoiseLuminance(color);
@@ -176,11 +185,11 @@ __global__ void SVGFTemporalKernel(
 						for (int c = 0; c < 3; c++) planeDistance += (guide.position[c] - oldGuide.position[c]) * oldGuide.normal[c];
 						if (oldGuide.depth <= 0.0f || fabsf(oldGuide.depth - previousDepth) > depthTolerance
 							|| fabsf(planeDistance) > fmaxf(0.01f, footprint)) { rejection = PT_DENOISE_DEPTH; continue; }
-						if (oldGuide.materialIndex != guide.materialIndex) { rejection = PT_DENOISE_MATERIAL; continue; }
-						if (PT_DenoiseNormalDot(guide, oldGuide) < 0.9f) { rejection = PT_DENOISE_NORMAL; continue; }
+						if (signal != 2 && oldGuide.materialIndex != guide.materialIndex) { rejection = PT_DENOISE_MATERIAL; continue; }
+						if (signal != 2 && PT_DenoiseNormalDot(guide, oldGuide) < 0.9f) { rejection = PT_DENOISE_NORMAL; continue; }
 						if (signal == 1) {
 							float shadingDot = 0.0f, viewDot = 0.0f, viewLength = 0.0f, oldViewLength = 0.0f;
-							for (int c = 0; c < 3; c++) {
+							for (int c = 0; c < 3 && signal != 2; c++) {
 								shadingDot += guide.shadingNormal[c] * oldGuide.shadingNormal[c];
 								const float view = guide.position[c] - params.camPos[c];
 								viewDot += view * delta[c];
@@ -228,9 +237,9 @@ __global__ void SVGFTemporalKernel(
 			+ 0.1f * fmaxf(0.1f, localMean);
 		if (fabsf(localMean - historyMoments[0]) <= changeLimit) {
 			rejection = PT_DENOISE_REUSED;
-			const float cap = signal == 0 ? 32.0f : 4.0f + 20.0f * guide.roughness * guide.roughness;
+			const float cap = signal == 2 ? 16.0f : (signal == 0 ? 32.0f : 4.0f + 20.0f * guide.roughness * guide.roughness);
 			historyLength = fminf(cap, historyMoments[2] + 1.0f);
-			const float alpha = fmaxf(signal == 0 ? 0.08f : 0.35f - 0.25f * guide.roughness, 1.0f / historyLength);
+			const float alpha = fmaxf(signal == 2 ? 0.125f : (signal == 0 ? 0.08f : 0.35f - 0.25f * guide.roughness), 1.0f / historyLength);
 			const float momentAlpha = fmaxf(0.1f, 1.0f / historyLength);
 			mean += (historyMoments[0] - mean) * (1.0f - momentAlpha);
 			square += (historyMoments[1] - square) * (1.0f - momentAlpha);
@@ -251,6 +260,32 @@ __global__ void SVGFTemporalKernel(
 	moments[index + 3] = (float)rejection;
 }
 
+__global__ void SVGFBootstrapVolumeVarianceKernel(
+	float *input, const ptCudaDenoiseGuide_t *guides, float *moments, int width, int height, int frameIndex
+) {
+	const int x = blockIdx.x * blockDim.x + threadIdx.x;
+	const int y = blockIdx.y * blockDim.y + threadIdx.y;
+	if (x >= width || y >= height || frameIndex >= 3) return;
+	const int pixel = y * width + x, index = pixel * 4;
+	if (!PT_DenoiseSupported(guides[pixel], 2)) return;
+	float mean = 0.0f, square = 0.0f, count = 0.0f;
+	for (int dy = -1; dy <= 1; dy++) {
+		for (int dx = -1; dx <= 1; dx++) {
+			const int sx = x + dx, sy = y + dy;
+			if (sx < 0 || sx >= width || sy < 0 || sy >= height) continue;
+			const int neighbor = sy * width + sx;
+			if (!PT_DenoiseSameSurface(guides[pixel], guides[neighbor], 2)) continue;
+			const float luminance = PT_DenoiseLuminance(input + neighbor * 4);
+			mean += luminance;
+			square += luminance * luminance;
+			count += 1.0f;
+		}
+	}
+	mean /= fmaxf(1.0f, count);
+	input[index + 3] = fmaxf(input[index + 3], fmaxf(0.0f, square / fmaxf(1.0f, count) - mean * mean));
+	moments[index + 1] = moments[index] * moments[index] + input[index + 3];
+}
+
 __global__ void SVGFAtrousKernel(
 	const float *input, const ptCudaDenoiseGuide_t *guides, float *output,
 	int width, int height, int step, float strength, int signal
@@ -261,7 +296,7 @@ __global__ void SVGFAtrousKernel(
 	const int pixel = y * width + x;
 	const int index = pixel * 4;
 	const ptCudaDenoiseGuide_t &guide = guides[pixel];
-	if (guide.depth <= 0.0f) {
+	if (!PT_DenoiseSupported(guide, signal)) {
 		for (int c = 0; c < 4; c++) output[index + c] = input[index + c];
 		return;
 	}
@@ -273,7 +308,7 @@ __global__ void SVGFAtrousKernel(
 			const int sx = x + dx, sy = y + dy;
 			if (sx < 0 || sx >= width || sy < 0 || sy >= height) continue;
 			const int neighbor = sy * width + sx;
-			if (!PT_DenoiseSameSurface(guide, guides[neighbor])) continue;
+			if (!PT_DenoiseSameSurface(guide, guides[neighbor], signal)) continue;
 			const float weight = (dx == 0 ? 2.0f : 1.0f) * (dy == 0 ? 2.0f : 1.0f);
 			variance += input[neighbor * 4 + 3] * weight;
 			varianceWeight += weight;
@@ -291,7 +326,8 @@ __global__ void SVGFAtrousKernel(
 			if (sx < 0 || sx >= width || sy < 0 || sy >= height) continue;
 			const int neighbor = sy * width + sx;
 			const ptCudaDenoiseGuide_t &sampleGuide = guides[neighbor];
-			if (sampleGuide.depth <= 0.0f) continue;
+			if (!PT_DenoiseSupported(sampleGuide, signal)) continue;
+			if (signal == 2 && !PT_DenoiseSameSurface(guide, sampleGuide, signal)) continue;
 			const float depthSigma = fmaxf(0.01f, guide.depth * 0.002f)
 				+ depthSlope * step * sqrtf((float)(dx * dx + dy * dy));
 			const float colorDelta = fabsf(luminance - PT_DenoiseLuminance(input + neighbor * 4));
@@ -299,9 +335,9 @@ __global__ void SVGFAtrousKernel(
 			float shadingDot = 0.0f;
 			for (int c = 0; c < 3; c++) shadingDot += guide.shadingNormal[c] * sampleGuide.shadingNormal[c];
 			shadingDot = fminf(1.0f, fmaxf(0.0f, shadingDot));
-			const float normalWeight = dx == 0 && dy == 0 ? 1.0f : powf(normalDot, 32.0f)
+			const float normalWeight = signal == 2 || (dx == 0 && dy == 0) ? 1.0f : powf(normalDot, 32.0f)
 				* powf(shadingDot, signal == 0 ? 4.0f : 128.0f - 96.0f * guide.roughness * guide.roughness);
-			const float roughnessWeight = signal == 0 ? 1.0f : expf(-20.0f * fabsf(guide.roughness - sampleGuide.roughness));
+			const float roughnessWeight = signal != 1 ? 1.0f : expf(-20.0f * fabsf(guide.roughness - sampleGuide.roughness));
 			const float weight = (dx == 0 ? 2.0f : 1.0f) * (dy == 0 ? 2.0f : 1.0f)
 				* normalWeight * roughnessWeight
 				* expf(-fabsf(guide.depth - sampleGuide.depth) / depthSigma - colorDelta / colorSigma);
@@ -315,21 +351,23 @@ __global__ void SVGFAtrousKernel(
 	output[index + 3] = sumVariance / (totalWeight * totalWeight);
 }
 
-__global__ void SVGFStoreDiffuseKernel(
-	const float *illumination, const ptCudaDenoiseGuide_t *guides, float *output, int width, int height
+__global__ void SVGFStoreSurfaceKernel(
+	const float *illumination, const ptCudaDenoiseGuide_t *guides, float *output, int width, int height, int signal
 ) {
 	const int x = blockIdx.x * blockDim.x + threadIdx.x;
 	const int y = blockIdx.y * blockDim.y + threadIdx.y;
 	if (x >= width || y >= height) return;
 	const int pixel = y * width + x;
-	for (int c = 0; c < 3; c++) output[pixel * 4 + c] = illumination[pixel * 4 + c] * guides[pixel].albedo[c];
+	const float *reflectance = PT_DenoiseReflectance(guides[pixel], signal);
+	for (int c = 0; c < 3; c++) output[pixel * 4 + c] = illumination[pixel * 4 + c] * reflectance[c];
 	output[pixel * 4 + 3] = 0.0f;
 }
 
 __global__ void SVGFResolveKernel(
-	const float *specular, const float *filteredDiffuse, const float *radiance, const float *diffuseRadiance,
-	const float *specularRadiance, const float *accumulation, const ptCudaDenoiseGuide_t *guides,
-	float *output, int width, int height, int debug
+	const float *volume, const float *filteredDiffuse, const float *filteredSpecular, const float *radiance,
+	const float *diffuseRadiance, const float *specularRadiance, const float *volumeRadiance,
+	const float *accumulation, const ptCudaDenoiseGuide_t *guides,
+	float *output, int width, int height, int debug, int capture
 ) {
 	const int x = blockIdx.x * blockDim.x + threadIdx.x;
 	const int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -338,11 +376,17 @@ __global__ void SVGFResolveKernel(
 	const int index = pixel * 4;
 	for (int c = 0; c < 3; c++) {
 		if (guides[pixel].depth > 0.0f) {
-			const float filteredSpecular = specular[index + c] * guides[pixel].specularAlbedo[c];
-			const float residual = fmaxf(0.0f, radiance[index + c] - diffuseRadiance[index + c] - specularRadiance[index + c]);
-			output[index + c] = debug == 5 ? filteredDiffuse[index + c] : (debug == 6 ? filteredSpecular
-				: filteredDiffuse[index + c] + filteredSpecular + residual);
-		} else output[index + c] = debug >= 5 ? 0.0f : accumulation[index + c];
+			const float residual = fmaxf(0.0f, radiance[index + c] - diffuseRadiance[index + c]
+				- specularRadiance[index + c] - volumeRadiance[index + c]);
+			output[index + c] = debug == 5 ? filteredDiffuse[index + c] : (debug == 6 ? filteredSpecular[index + c]
+				: (debug == 7 ? volume[index + c]
+				: filteredDiffuse[index + c] + filteredSpecular[index + c] + volume[index + c] + residual));
+		} else {
+			const float raw = capture && PT_DenoiseSupported(guides[pixel], 2)
+				? fmaxf(0.0f, accumulation[index + c] - volumeRadiance[index + c]) + volume[index + c]
+				: accumulation[index + c];
+			output[index + c] = debug == 7 ? volume[index + c] : (debug >= 5 ? 0.0f : raw);
+		}
 	}
 	output[index + 3] = accumulation[index + 3];
 }

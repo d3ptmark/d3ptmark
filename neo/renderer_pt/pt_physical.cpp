@@ -6,6 +6,7 @@
 #include "framework/CmdSystem.h"
 #include "renderer/tr_local.h"
 #include "renderer_pt/pt_physical.h"
+#include "renderer_pt/pt_material_editor.h"
 #include "renderer_pt/pt_render.h"
 #include "sys/sys_imgui.h"
 
@@ -71,11 +72,13 @@ static void PT_PhysicalPanel_f( const idCmdArgs &args ) {
 }
 
 void R_PT_InitPhysical() {
+	R_PT_InitMaterialEditor();
 	cmdSystem->AddCommand( "r_ptPhysicalUI", PT_PhysicalPanel_f, CMD_FL_RENDERER, "toggle experimental physical path tracer controls" );
 	common->Printf( "PT_PHYSICAL: experimental photometric lighting and thin-lens camera enabled; r_ptPhysicalUI opens controls\n" );
 }
 
 void R_PT_PhysicalCamera( viewDef_t *view ) {
+	R_PT_UpdateMaterialPick( view );
 	if ( view->isSubview || !r_ptDraw.GetBool() || r_ptMode.GetInteger() != PT_MODE_PATHTRACE ) return;
 	const float width = view->viewport.x2 + 1 - view->viewport.x1;
 	const float height = view->viewport.y2 + 1 - view->viewport.y1;
@@ -125,7 +128,7 @@ void R_PT_DrawPhysicalPanel() {
 	ImGui::SetNextWindowSize( ImVec2( 510, 650 ), ImGuiCond_FirstUseEver );
 	if ( ImGui::Begin( "Physical Path Tracer (experimental)", &open ) ) {
 		ImGui::PushItemWidth( ImGui::GetContentRegionAvail().x * 0.5f );
-		ImGui::TextWrapped( "PT_PHYSICAL is a build-time model, not a Doom 3 lighting preset. Controls are saved as CVars." );
+		ImGui::TextWrapped( "PT_PHYSICAL is a build-time model. Global controls are archived CVars; material previews require explicit Save." );
 		if ( !r_ptDraw.GetBool() || r_ptMode.GetInteger() != PT_MODE_PATHTRACE ) {
 			ImGui::TextWrapped( "Select path tracing to preview these settings." );
 			if ( ImGui::Button( "Use physical path tracing" ) ) {
@@ -133,9 +136,10 @@ void R_PT_DrawPhysicalPanel() {
 				r_ptMode.SetInteger( PT_MODE_PATHTRACE );
 			}
 		}
-		const bool capturing = RB_PT_GetCaptureTargetFrames() > 0;
+		const bool capturing = RB_PT_IsCapturing();
 		if ( capturing ) ImGui::TextWrapped( "Capture in progress: controls locked until capture completes or r_ptAbort." );
 		ImGui::BeginDisabled( capturing );
+		R_PT_DrawMaterialEditor();
 		if ( ImGui::CollapsingHeader( "Photographic camera", ImGuiTreeNodeFlags_DefaultOpen ) ) {
 			PT_PhysicalSlider( "ISO", r_ptPhysicalISO, 25, 25600, "%.0f", true );
 			PT_PhysicalSlider( "Shutter (seconds)", r_ptPhysicalShutter, 0.000125f, 30, "%.5f s", true );

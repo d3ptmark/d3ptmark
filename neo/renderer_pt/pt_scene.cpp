@@ -116,13 +116,17 @@ void idPathTracerScene::FlushMaterialsAndTextures() {
 	textureGLNames.Clear();
 	textureHash.Free();
 
+	InvalidateMaterials();
+
+	textureGeneration++;
+	needTextureFlush = false;
+}
+
+void idPathTracerScene::InvalidateMaterials() {
 	materials.Clear();
 	materialEmission.Clear();
 	materialCache.Clear();
 	AddDefaultMaterial();
-
-	textureGeneration++;
-	needTextureFlush = false;
 }
 
 /*
@@ -243,6 +247,32 @@ void idPathTracerScene::AddTriangles( const idDrawVert *verts, int numVerts, con
 	contentHash = PT_HashWords( contentHash, &materialIndex, sizeof( materialIndex ) );
 
 	const ptMaterial_t &mat = materials[materialIndex];
+	if ( mat.polygonOffset > 0 ) {
+		extern idCVar r_ptRayOffset;
+		idList<idVec3> normals;
+		normals.SetNum( numVerts );
+		for ( int i = 0; i < numVerts; i++ ) normals[i].Zero();
+		for ( int i = 0; i + 2 < numIndexes; i += 3 ) {
+			const int a = indexes[i], b = indexes[i + 1], c = indexes[i + 2];
+			if ( a < 0 || a >= numVerts || b < 0 || b >= numVerts || c < 0 || c >= numVerts ) continue;
+			const ptVertex_t &v0 = vertices[vertexBase + a], &v1 = vertices[vertexBase + b], &v2 = vertices[vertexBase + c];
+			const idVec3 p0( v0.position[0], v0.position[1], v0.position[2] );
+			const idVec3 p1( v1.position[0], v1.position[1], v1.position[2] );
+			const idVec3 p2( v2.position[0], v2.position[1], v2.position[2] );
+			const idVec3 normal = ( p2 - p0 ).Cross( p1 - p0 );
+			normals[a] += normal;
+			normals[b] += normal;
+			normals[c] += normal;
+		}
+		// Doom uses clockwise face winding. Separate coplanar decals enough
+		// that overlay continuation rays still reach the receiver underneath.
+		const float offset = Max( 0.01f, 4 * r_ptRayOffset.GetFloat() ) * idMath::ClampFloat( 1, 10, mat.polygonOffset );
+		for ( int i = 0; i < numVerts; i++ ) {
+			if ( normals[i].Normalize() == 0 ) continue;
+			ptVertex_t &v = vertices[vertexBase + i];
+			for ( int c = 0; c < 3; c++ ) v.position[c] += normals[i][c] * offset;
+		}
+	}
 	if ( mat.noShadows || mat.isAmbientOnly || mat.blendMode == PT_BLEND_ADD ) {
 		triFlags |= PT_TRI_NO_OCCLUDE;
 	}

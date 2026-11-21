@@ -1055,6 +1055,8 @@ const int GLS_DEFAULT							= GLS_DEPTHFUNC_ALWAYS;
 
 void R_Init( void );
 void R_InitOpenGL( void );
+bool R_WriteScreenshotImage( const char *fileName, const byte *rgb, int width, int height,
+							int format, const char *basePath = "fs_savepath" );
 
 void R_DoneFreeType( void );
 

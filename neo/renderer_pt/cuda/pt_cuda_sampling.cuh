@@ -895,8 +895,7 @@ __device__ void SampleIndirectLight(
 		PT_ApplyVertexColor(mat, vertices, triangles[hitInfo.triangleIndex],
 			hitInfo.barycentrics[0], hitInfo.barycentrics[1], hitInfo.barycentrics[2], albedo);
 
-		const bool decalOverlay = mat.noShadows && !mat.isAmbientOnly && mat.alphaTest == 0.0f
-			&& mat.transmission == 0.0f && mat.blendMode == PT_BLEND_OPAQUE;
+		const bool decalOverlay = PT_IsLitDecal(mat);
 		const bool passThrough = decalOverlay || mat.isAmbientOnly || mat.transmission > 0.5f
 			|| mat.blendMode == PT_BLEND_ADD || PT_IsModulation(mat.blendMode)
 			|| (mat.alphaTest > 0.0f && albedo[3] < mat.alphaTest);

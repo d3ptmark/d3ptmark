@@ -63,6 +63,7 @@ public:
 
 	// drops all cached materials/textures, e.g. after a backend change
 	void					Clear();
+	void					InvalidateMaterials();
 
 	void					BeginFrame();
 	void					AddDrawSurface( const struct drawSurf_s *surf );

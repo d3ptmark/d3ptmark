@@ -151,18 +151,19 @@ typedef struct {
 } ptCudaDenoiseSignal_t;
 
 typedef struct {
-	float *radiance;				// full fresh HDR, including unfiltered emission/volume
-	ptCudaDenoiseSignal_t signals[2];	// diffuse, specular
+	float *radiance;				// full fresh HDR, including emission and volume
+	ptCudaDenoiseSignal_t signals[3];	// diffuse, specular, volume
 	ptCudaDenoiseGuide_t *guides[2];
 	float *scratch;				// float4 illumination + variance
 	float *filteredDiffuse;
+	float *filteredSpecular;
 } ptCudaDenoiseBuffers_t;
 
 // traces params.width x params.height into the float4 accumulation buffer
 // (row pitch == params.width)
 void LaunchPathTracingKernel( const ptCudaSceneView_t *scene, float *accumBuffer,
 							  float *radianceBuffer, ptCudaDenoiseGuide_t *guideBuffer,
-							  float *diffuseBuffer, float *specularBuffer,
+							  float *diffuseBuffer, float *specularBuffer, float *volumeBuffer,
 							  const ptRenderParams_t *params, cudaStream_t stream );
 
 // Temporal reprojection/moments, four atrous passes and albedo remodulation.

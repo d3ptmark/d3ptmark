@@ -370,8 +370,11 @@ void idPathTracerBackendCUDA::FreeDenoiser() {
 	cudaFree( denoiser.radiance );
 	cudaFree( denoiser.scratch );
 	cudaFree( denoiser.filteredDiffuse );
+	cudaFree( denoiser.filteredSpecular );
 	for ( int i = 0; i < 2; i++ ) {
 		cudaFree( denoiser.guides[i] );
+	}
+	for ( int i = 0; i < 3; i++ ) {
 		cudaFree( denoiser.signals[i].radiance );
 		for ( int slot = 0; slot < 2; slot++ ) {
 			cudaFree( denoiser.signals[i].history[slot] );
@@ -395,9 +398,12 @@ bool idPathTracerBackendCUDA::ResizeDenoiser( int width, int height ) {
 	PT_CUDA_CHECK( cudaMalloc( &denoiser.radiance, colorBytes ) );
 	PT_CUDA_CHECK( cudaMalloc( &denoiser.scratch, colorBytes ) );
 	PT_CUDA_CHECK( cudaMalloc( &denoiser.filteredDiffuse, colorBytes ) );
+	PT_CUDA_CHECK( cudaMalloc( &denoiser.filteredSpecular, colorBytes ) );
 	PT_CUDA_CHECK( cudaMalloc( &d_filtered, colorBytes ) );
 	for ( int i = 0; i < 2; i++ ) {
 		PT_CUDA_CHECK( cudaMalloc( &denoiser.guides[i], pixels * sizeof( ptCudaDenoiseGuide_t ) ) );
+	}
+	for ( int i = 0; i < 3; i++ ) {
 		PT_CUDA_CHECK( cudaMalloc( &denoiser.signals[i].radiance, colorBytes ) );
 		for ( int slot = 0; slot < 2; slot++ ) {
 			PT_CUDA_CHECK( cudaMalloc( &denoiser.signals[i].history[slot], colorBytes ) );
@@ -685,7 +691,8 @@ bool idPathTracerBackendCUDA::Render( const ptRenderParams_t &params ) {
 	}
 	LaunchPathTracingKernel( &view, d_accum, denoise ? denoiser.radiance : NULL,
 		denoise ? denoiser.guides[denoiseFrameSlot] : NULL,
-		denoise ? denoiser.signals[0].radiance : NULL, denoise ? denoiser.signals[1].radiance : NULL, &p, stream );
+		denoise ? denoiser.signals[0].radiance : NULL, denoise ? denoiser.signals[1].radiance : NULL,
+		denoise ? denoiser.signals[2].radiance : NULL, &p, stream );
 	PT_CUDA_CHECK( cudaGetLastError() );
 
 	accumFrames++;

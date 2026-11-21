@@ -97,7 +97,13 @@ not a full port of Q2VKPT's adaptive A-SVGF pipeline:
 4. Run four variance-guided atrous passes at pixel spacings 1, 2, 4, and 8. Retain the
    first-pass illumination as feedback, then restore current reflectance for display.
    Specular spacing is capped by roughness and its shading-normal guidance is stronger.
-   Add primary emission and volumetric scattering back as unfiltered residuals.
+5. Filter volumetric scattering as a third HDR signal with independent moments/history,
+   no surface-reflectance modulation, and depth-boundary guidance rather than surface
+   normals, textures, or roughness. Bootstrap low-batch capture variance spatially,
+   including single-dispatch 8-spp captures. Real-time volume history is capped at
+   16 frames, with at least 0.125 new-color weight; camera movement discards it because
+   scattering is view dependent and the physical fog boundary moves with the camera.
+   Add only primary emission and other non-scattered residuals back unfiltered.
 
 Enabled by default in path tracing mode only. `r_ptDenoise 0` displays the raw progressive
 mean; `r_ptDenoiseStrength` adjusts the variance-guided luminance sigma. Denoising uses
@@ -105,16 +111,17 @@ fresh samples, not the already averaged raw buffer, so it remains responsive whi
 `r_ptAccumulation` controls the raw progressive mean independently of SVGF history.
 Use `r_ptDenoise 0` and `r_ptDenoiseDebug 0` for progressively converged reference captures with `r_ptCompare`
 or `r_ptSequence`. These tools use an offline progressive path: full configured tracing
-quality from the first frame, running diffuse/specular means and variance of the mean,
+quality from the first frame, running diffuse/specular/volume means and variance of the mean,
 averaged surface guides, and spatial denoising of the accumulated signals. They do not
-use the real-time history caps or lighting-change clipping. Emission and volumetric
+use the real-time history caps or lighting-change clipping. Unfiltered emission
 residuals come from the full progressive mean too, so fresh fog noise cannot overwrite
 an otherwise converged capture. Each cinematic tick resets this accumulation; screenshot
 redraws reuse the completed result instead of adding extra samples.
 The camera, geometry, materials and lights are snapshotted for each captured tick, so
 render-time animation cannot perturb or repeatedly reset the progressive estimate.
 `r_ptDenoise 1` filters the progressive capture; `0` keeps it an unfiltered reference.
-Real-time volumetrics remain unfiltered and may still look noisy while playing.
+Both legacy volumetrics and physical single scattering use the separate volume filter.
+`r_ptDenoiseStrength` also controls its variance-guided smoothing.
 
 Camera movement resets the raw mean without automatically throwing away reprojectable
 history. Explicit resets, resolution/backend/texture changes, trace-setting changes,
@@ -128,19 +135,22 @@ This stage has no object motion vectors: non-world/deforming surfaces and view w
 receive spatial filtering only, never temporal reuse. Sky, transparent, ambient-only,
 no-shadow overlays, and mixed-primary-surface pixels bypass denoising. Opaque glossy,
 metallic, and emissive surfaces now participate; primary emission itself is not filtered.
-Adaptive gradient sampling, object motion vectors, transmission/volumetric denoising,
+Adaptive gradient sampling, object motion vectors, transmission denoising,
 and TAA remain future work; low-sample silhouettes can still shimmer, sharp reflections
 can remain noisy, and moving objects are spatial-only. Bypassed pixels display the raw
-progressive mean.
+progressive mean, including their fog; volume filtering currently shares the primary
+surface depth/coverage guide and does not invent a guide through glass or mixed silhouettes.
+Offline captures additionally filter volume on sky/miss rays without filtering the sky
+itself; real-time misses retain the full raw progressive result.
 
-Denoiser storage is allocated lazily at the trace resolution: 384 additional bytes per
-pixel (about 190 MiB at 960x540), rather than at full window resolution.
+Denoiser storage is allocated lazily at the trace resolution: 480 additional bytes per
+pixel (about 237 MiB at 960x540), rather than at full window resolution.
 
 #### Denoising diagnostics
 
 `r_ptDenoiseDebug` enables the denoiser even when `r_ptDenoise` is off. Return it to
 `0` for normal beauty/raw comparisons. Modes 1-4 bypass exposure, gamma, and tone mapping;
-modes 5-6 show only the filtered HDR signal through normal tone mapping.
+modes 5-7 show only the filtered HDR signal through normal tone mapping.
 
 | Mode | Display |
 |---|---|
@@ -150,8 +160,9 @@ modes 5-6 show only the filtered HDR signal through normal tone mapping.
 | `4` | History rejection reason (palette below) |
 | `5` | Filtered diffuse only, without emission/volume |
 | `6` | Filtered specular only, without emission/volume |
+| `7` | Filtered volume only, without surface lighting/emission |
 
-`r_ptDenoiseDebugSignal 0` selects diffuse and `1` specular for modes 2-4.
+`r_ptDenoiseDebugSignal 0` selects diffuse, `1` specular, and `2` volume for modes 2-4.
 Rejection colors: green reused, magenta global reset, yellow dynamic/no motion,
 blue offscreen, red depth/disocclusion, cyan normal/view change, orange material,
 purple reflectance/roughness, white lighting change, gray missing samples, black unsupported.
@@ -344,8 +355,9 @@ moving the camera moves its boundary. There is no multiple scattering.
 | `r_ptPhysicalFogSteps` | `16` | Stratified integration samples per ray segment |
 
 Start with `r_ptPhysicalFogDensity 0.01`. More integration steps or accumulated
-samples reduce noise. Volume light stays outside surface-history denoising and
-converges through the progressive mean, including in `r_ptSequence`. Fog changes
+samples reduce noise. Volume light has separate variance-guided denoising and
+converges through its full progressive mean in captures, including `r_ptSequence`
+and `r_ptBenchmark`. Primary emission remains unfiltered. Fog changes
 invalidate accumulation/history; legacy `r_ptVolumetric` does not control this medium.
 
 #### Explicit physical material transport
@@ -397,16 +409,128 @@ bounded fog extinction, analytic single scattering, and volumetric occlusion.
 With `PT_CUDA_DENOISING_TESTS`, `pt_cuda_postprocess_test` additionally checks HDR
 highlight spreading, exposure thresholds, disabled identity, and immutable inputs.
 
+#### Live material inspector
+
+Weapon bodies marked `noShadows` remain opaque: shadow suppression alone does
+not make a surface a decal. Lit decal overlays require authored decal/offset
+or translucent coverage. Active shader-stage conditions are evaluated when
+translating animated materials, including muzzle-flash timing.
+
+Particle geometry already generated by Doom's particle/deform system is traced.
+When PT is enabled, deformed flare/sprite vertices are retained in frame memory
+instead of being available only through OpenGL's vertex cache. Polygon-offset
+decals are separated from their receivers so coplanar blood overlays remain visible.
+`blend add` (`ONE, ONE`) preserves RGB even when texture alpha is zero;
+`SRC_ALPHA, ONE` retains its authored alpha weighting. Selected-stage vertex
+colors (including inverse vertex color), fade and UV animation are preserved.
+In physical builds, additive unlit FX and alpha-blended flame/spark/muzzle-flash
+materials use `r_ptPhysicalEmissionNits` for HDR radiance, visible to camera and
+bounce rays. Alpha-over smoke and filter effects retain their compositing.
+This does not add volumetric particle simulation or direct-light sampling of
+individual particle billboards.
+OpenGL-only heat-haze/distortion shaders (including explosion shockwaves) and
+alpha-write-only stages do not supply visible PT color and are omitted rather
+than rendered as opaque white polygons. Supported color stages in the same
+material remain visible. Authored/calibrated physical surfaces still use their
+physical transport; screen-space heat-haze distortion is not implemented.
+
+Physical builds automatically calibrate legacy materials by default
+(`r_ptPhysicalAutoMaterials 1`). Stock window panes receive thin-glass transport
+(IOR 1.52), including Enpro's chi-glass family and plasma-tube glass. Known panes
+retain physical transport even when their GL materials use decal sorting,
+subviews or effects-namespace names; actual glass decals and FX remain excluded.
+The washroom water sheet uses IOR 1.333. Recognizable copper, polished
+and weathered metals, paint, rust, rubber, plastic, skin, paper, wood and stone
+receive separate metallic/roughness defaults. Artist descriptions take precedence
+over substrate sound tags: painted pipes remain dielectric, and heavily oxidized
+copper is not treated as a polished conductor. Other lit surfaces use conservative
+dielectric defaults. Existing specular maps continue to vary automatic roughness
+per texel, while opaque diffuse, normal, emission, alpha-test and texture animation
+remain. The stock cube-map-only chrome pipe and washroom mirror use traced
+reflections instead of baked environment maps.
+
+These are approximate legacy-asset conversions, not measured PBR textures or a
+per-texture remaster. Glass/liquid names alone never turn decals, monitor effects,
+particles or creature skins into clear refractors. Only known stock pane/water
+families receive automatic transmission; thin sheets avoid assuming watertight
+meshes and do not simulate pool depth, dirty-glass layering or rough refraction.
+Legacy pane overlays are replaced by clear dielectric transport. Explicit authored
+`ptMaterial` blocks and saved/live inspector overrides always win.
+
+The inspector shows the selected default profile and offers **Automatic material
+calibration** to switch the global pass off for comparison. Toggling it rebuilds
+materials and resets history without flushing textures or deleting saved overrides.
+No asset or material-override file is generated by automatic calibration.
+
+In a `PT_PHYSICAL` build, aim at a surface, open `r_ptPhysicalUI`, and press
+**Pick center material** in the Material inspector. Alternatively, bind
+`r_ptMaterialPick` to a key: it picks the center surface on the next main 3D view
+and opens the panel. Selection stays locked while you move the sliders.
+Picking reuses the engine's geometry trace, including translucent surfaces and
+excluding the player/view weapon; it does not test individual alpha-mask texels.
+
+Controls include metallic, roughness, transmission, IOR, solid/thin/diffuse
+transmission, sheet thickness, RGB absorption, and linear base-color tint.
+Edits preview immediately on **all instances sharing that material name**,
+including animated instances. An override replaces legacy specular-map estimates
+with the chosen metallic/roughness values. Global roughness calibration still
+applies. Glass is colored through absorption; base tint affects reflected metallic
+and diffuse color, not clear-glass transmission.
+
+- **Reset to defaults** removes the live override and restores authored settings
+  or automatic calibration (legacy translation when calibration is off).
+- **Revert unsaved** restores the last saved override, or material defaults
+  if none was saved.
+- **Save material** persists only the selected material. Other unsaved previews
+  remain unsaved. Reset followed by Save removes a previously saved override.
+
+Saved overrides live in `pt_materials.cfg` in the active game's **config directory**
+(`fs_configpath`, normally `~/.config/dhewm3/base/` on Linux). They are loaded on
+startup; no `.mtr`, packed asset, or ordinary engine config is rewritten.
+Saving replaces this sidecar through a temporary file; errors are shown in the
+panel and console without marking the preview as saved. Unsaved previews last
+for this engine session only.
+
+Material changes rebuild the material cache without re-reading every texture,
+and reset accumulation and denoising history even with scene-change resets
+disabled. Saving an unchanged preview does not restart accumulation. Editing,
+picking, resetting, reverting, and saving are locked throughout a comparison or
+cinematic capture, including its preparation and stepping phases.
+
+Console equivalents are available for precise values and scripting:
+
+```
+r_ptMaterial select textures/example/metal
+r_ptMaterial set metallic 1
+r_ptMaterial set roughness 0.12
+r_ptMaterial set tint 0.9 0.8 0.6
+r_ptMaterial set absorption 0.1 0.4 1.2
+r_ptMaterial status
+r_ptMaterial save
+```
+
+`r_ptMaterial reset` and `r_ptMaterial revert` match the panel buttons. Settings
+are validated before previewing; unknown fields, non-finite/out-of-range values,
+and malformed override files produce explicit errors. Physical builds also include
+the CPU-only `pt_material_editor_test` regression target for preview isolation,
+reset/revert, selected-only persistence, exact float round trips, invalid input,
+and automatic material profile selection.
+
 ## Console Commands
 
 | Command | Description |
 |---------|-------------|
 | `r_ptInfo` | List compiled backends and print device / memory / timing info for the active one |
+| `r_ptBenchmark <demo> <spp>` | Converge and save every recorded render-demo frame at exact spp, with 30 Hz maximum playback and timing statistics including image-write overhead |
 | `r_ptReset` | Restart accumulation and drop cached materials and textures |
 | `r_ptCompare [frames]` | Save an OpenGL and a path-traced screenshot after the given accumulated frame count |
 | `r_ptSequence <start> <end> [frames]` | Path trace a range of demo frames to screenshots |
 | `r_ptAbort` | Abort `r_ptCompare` / `r_ptSequence` |
 | `r_glSequence` / `r_glAbort` | OpenGL counterpart of `r_ptSequence` (always available) |
+
+Normal gameplay should use `com_fixedTic 0`. A saved `com_fixedTic 1` forces one
+simulation tick per rendered frame and produces slow motion below 60 FPS; enter
+`com_fixedTic 0` in the console if an interrupted capture left it enabled.
 
 To capture Enpro from startup, append `+map game/enpro +r_ptSequence 200 1460 128`
 to the engine command line. The sequence waits for the main 3D view, advances 200
@@ -498,8 +622,8 @@ still need actual lights or emissive geometry to receive illumination.
 | `r_ptSoftShadowScale` | `0.2` | Soft shadow jitter (0 = hard shadows) |
 | `r_ptDenoise` | `1` | SVGF temporal/variance-guided denoising in path tracing mode only |
 | `r_ptDenoiseStrength` | `0.5` | Variance-guided luminance sigma scale (0.05–4); higher values smooth more |
-| `r_ptDenoiseDebug` | `0` | 0 beauty, 1 coverage, 2 history, 3 relative noise, 4 rejection, 5 diffuse, 6 specular |
-| `r_ptDenoiseDebugSignal` | `0` | Signal for diagnostics 2-4: 0 diffuse, 1 specular |
+| `r_ptDenoiseDebug` | `0` | 0 beauty, 1 coverage, 2 history, 3 relative noise, 4 rejection, 5 diffuse, 6 specular, 7 volume |
+| `r_ptDenoiseDebugSignal` | `0` | Signal for diagnostics 2-4: 0 diffuse, 1 specular, 2 volume |
 | `r_ptExposure` | `1.0` | Exposure multiplier |
 | `r_ptGamma` | `2.2` | Output gamma, textures and colors are decoded with 2.2 |
 | `r_ptToneMapMode` | `1` | 0 = Reinhard, 1 = ACES, 2 = Uncharted 2 |

@@ -32,7 +32,7 @@ static T* Allocate(size_t count) {
 struct fixture_t {
 	ptRenderParams_t params, previousParams;
 	ptCudaDenoiseBuffers_t buffers;
-	std::vector<float> radiance, accumulation, lastMoments, diffuse, specular;
+	std::vector<float> radiance, accumulation, lastMoments, diffuse, specular, volume;
 	std::vector<ptCudaDenoiseGuide_t> guides;
 	float *d_filtered, *d_accumulation;
 	cudaStream_t stream;
@@ -63,10 +63,13 @@ struct fixture_t {
 		buffers.radiance = Allocate<float>(radiance.size());
 		buffers.scratch = Allocate<float>(radiance.size());
 		buffers.filteredDiffuse = Allocate<float>(radiance.size());
+		buffers.filteredSpecular = Allocate<float>(radiance.size());
 		d_filtered = Allocate<float>(radiance.size());
 		d_accumulation = Allocate<float>(radiance.size());
 		for (int i = 0; i < 2; i++) {
 			buffers.guides[i] = Allocate<ptCudaDenoiseGuide_t>(guides.size());
+		}
+		for (int i = 0; i < 3; i++) {
 			buffers.signals[i].radiance = Allocate<float>(radiance.size());
 			for (int slot = 0; slot < 2; slot++) {
 				buffers.signals[i].history[slot] = Allocate<float>(radiance.size());
@@ -79,10 +82,13 @@ struct fixture_t {
 		CUDA_CHECK(cudaFree(buffers.radiance));
 		CUDA_CHECK(cudaFree(buffers.scratch));
 		CUDA_CHECK(cudaFree(buffers.filteredDiffuse));
+		CUDA_CHECK(cudaFree(buffers.filteredSpecular));
 		CUDA_CHECK(cudaFree(d_filtered));
 		CUDA_CHECK(cudaFree(d_accumulation));
 		for (int i = 0; i < 2; i++) {
 			CUDA_CHECK(cudaFree(buffers.guides[i]));
+		}
+		for (int i = 0; i < 3; i++) {
 			CUDA_CHECK(cudaFree(buffers.signals[i].radiance));
 			for (int slot = 0; slot < 2; slot++) {
 				CUDA_CHECK(cudaFree(buffers.signals[i].history[slot]));
@@ -124,6 +130,11 @@ struct fixture_t {
 			CUDA_CHECK(cudaMemsetAsync(buffers.signals[1].radiance, 0, radiance.size() * sizeof(float), stream));
 		} else {
 			CUDA_CHECK(cudaMemcpyAsync(buffers.signals[1].radiance, specular.data(), radiance.size() * sizeof(float), cudaMemcpyHostToDevice, stream));
+		}
+		if (volume.empty()) {
+			CUDA_CHECK(cudaMemsetAsync(buffers.signals[2].radiance, 0, radiance.size() * sizeof(float), stream));
+		} else {
+			CUDA_CHECK(cudaMemcpyAsync(buffers.signals[2].radiance, volume.data(), radiance.size() * sizeof(float), cudaMemcpyHostToDevice, stream));
 		}
 		CUDA_CHECK(cudaMemcpyAsync(d_accumulation, raw.data(), raw.size() * sizeof(float), cudaMemcpyHostToDevice, stream));
 		CUDA_CHECK(cudaMemcpyAsync(buffers.guides[slot], guides.data(), guides.size() * sizeof(ptCudaDenoiseGuide_t), cudaMemcpyHostToDevice, stream));
@@ -407,6 +418,170 @@ static void CheckSeparatedSignals() {
 	for (size_t i = 0; i < glossy.guides.size(); i++) CheckNear("diffuse history uses stable geometric normal", glossy.lastMoments[i * 4 + 2], 32.0f);
 }
 
+static void SetVolumeNoise(fixture_t& f, int batchSamples, int firstSample) {
+	f.diffuse.assign(f.radiance.size(), 0.0f);
+	f.specular.assign(f.radiance.size(), 0.0f);
+	f.volume = f.radiance;
+	for (size_t pixel = 0; pixel < f.guides.size(); pixel++) {
+		float value = 0.0f;
+		for (int sample = 0; sample < batchSamples; sample++) {
+			unsigned int hash = (unsigned int)pixel * 747796405u + (unsigned int)(firstSample + sample) * 2891336453u;
+			hash = (hash ^ (hash >> 16)) * 2246822519u;
+			value += 0.5f + (hash & 65535u) / 65535.0f;
+		}
+		for (int c = 0; c < 3; c++) f.volume[pixel * 4 + c] = f.radiance[pixel * 4 + c] = value / batchSamples;
+	}
+}
+
+static void CheckVolumeSignals() {
+	for (int dispatches : {1, 2, 8}) {
+		fixture_t f(31, 23);
+		f.params.captureTargetFrames = dispatches;
+		f.params.samplesPerPixel = 8 / dispatches;
+		f.params.denoiseDebugSignal = 2;
+		f.accumulation.assign(f.radiance.size(), 0.0f);
+		std::vector<float> result;
+		for (int frame = 0; frame < dispatches; frame++) {
+			f.params.frameIndex = frame;
+			SetVolumeNoise(f, 8 / dispatches, frame * (8 / dispatches));
+			for (size_t i = 0; i < f.radiance.size(); i++) {
+				f.accumulation[i] += (f.radiance[i] - f.accumulation[i]) / (frame + 1.0f);
+			}
+			result = f.Filter();
+		}
+		const double before = SquaredError(f.accumulation), after = SquaredError(result);
+		std::printf("8-spp volume, %d dispatches: squared error %.6f -> %.6f\n", dispatches, before, after);
+		if (after >= before * 0.25) {
+			std::fprintf(stderr, "Volume denoising must reduce 8-spp squared error by at least 75%%\n");
+			std::exit(1);
+		}
+		CheckNear("volume capture retains every dispatch", f.lastMoments[2], (float)dispatches);
+	}
+
+	fixture_t f(19, 13);
+	f.params.denoiseDebugSignal = 2;
+	SetVolumeNoise(f, 8, 0);
+	const size_t bright = f.guides.size() / 2;
+	for (int c = 0; c < 3; c++) f.radiance[bright * 4 + c] += 20.0f;
+	const std::vector<float> beauty = f.Filter();
+	f.params.denoiseDebug = 7;
+	const std::vector<float> volume = f.Filter(false);
+	for (size_t i = 0; i < beauty.size(); i++) {
+		if (i % 4 != 3) CheckNear("primary emission stays sharp beside denoised volume",
+			beauty[i] - volume[i], i / 4 == bright ? 20.0f : 0.0f, 3e-5f);
+	}
+	for (size_t i = 0; i < f.guides.size(); i++) {
+		f.guides[i].normal[2] = f.guides[i].shadingNormal[2] = i % 2 ? -1.0f : 1.0f;
+		f.guides[i].roughness = i % 2 ? 0.01f : 1.0f;
+		f.guides[i].materialIndex = (int)i;
+		for (int c = 0; c < 3; c++) {
+			f.guides[i].albedo[c] = f.guides[i].specularAlbedo[c] = i % 2 ? 0.04f : 1.0f;
+		}
+	}
+	const std::vector<float> textured = f.Filter(false);
+	for (size_t i = 0; i < volume.size(); i++) CheckNear("volume filtering ignores surface texture and normals", textured[i], volume[i]);
+	f.params.camPos[0] += 0.1f;
+	f.UpdatePositions();
+	f.Filter();
+	for (size_t i = 0; i < f.guides.size(); i++) {
+		CheckNear("moving camera rejects volume history", f.lastMoments[i * 4 + 3], PT_DENOISE_RESET);
+	}
+
+	fixture_t edge(19, 13);
+	SetVolumeNoise(edge, 8, 0);
+	edge.params.captureTargetFrames = 2;
+	for (int y = 0; y < edge.params.height; y++) {
+		for (int x = 0; x < edge.params.width; x++) {
+			const int pixel = y * edge.params.width + x;
+			edge.guides[pixel].depth = x < 9 ? 10.0f : 30.0f;
+			for (int c = 0; c < 3; c++) edge.radiance[pixel * 4 + c] = edge.volume[pixel * 4 + c] = x < 9 ? 0.5f : 2.0f;
+		}
+	}
+	std::vector<float> result = edge.Filter();
+	edge.params.frameIndex = 1;
+	edge.accumulation = edge.radiance;
+	for (int y = 0; y < edge.params.height; y++) {
+		for (int x = 0; x < edge.params.width; x++) {
+			for (int c = 0; c < 3; c++) {
+				const int index = (y * edge.params.width + x) * 4 + c;
+				edge.radiance[index] = edge.volume[index] = x < 9 ? 1.5f : 4.0f;
+				edge.accumulation[index] = x < 9 ? 1.0f : 3.0f;
+			}
+		}
+	}
+	result = edge.Filter();
+	for (size_t i = 0; i < result.size(); i++) CheckNear("noisy volume does not bleed across depth boundaries", result[i], edge.accumulation[i], 3e-5f);
+	edge.params.frameIndex = 0;
+	edge.guides[bright].depth = 0.0f;
+	edge.accumulation = edge.radiance;
+	edge.accumulation[bright * 4] = 7.0f;
+	result = edge.Filter();
+	CheckNear("unsupported primary rays retain full raw accumulation", result[bright * 4], 7.0f);
+
+	fixture_t capture(1, 1);
+	capture.params.captureTargetFrames = 128;
+	capture.params.denoiseDebugSignal = 2;
+	SetVolumeNoise(capture, 8, 0);
+	capture.accumulation = capture.radiance;
+	for (int frame = 0; frame < 128; frame++) {
+		capture.params.frameIndex = frame;
+		for (int c = 0; c < 3; c++) {
+			capture.volume[c] = frame == 0 ? 8.0f : 0.0f;
+			capture.radiance[c] = frame == 0 ? 12.0f : 0.0f;
+			capture.accumulation[c] = 12.0f / (frame + 1.0f);
+		}
+		result = capture.Filter();
+		CheckNear("all volume and emission samples retained", result[0], capture.accumulation[0]);
+		CheckNear("volume history has no offline cap", capture.lastMoments[2], frame + 1.0f);
+		CheckNear("volume mean retains early samples", capture.lastMoments[0], 8.0f / (frame + 1.0f));
+	}
+	capture.params.frameIndex = 0;
+	for (int c = 0; c < 3; c++) {
+		capture.volume[c] = 3.0f;
+		capture.radiance[c] = capture.accumulation[c] = 4.0f;
+	}
+	result = capture.Filter();
+	CheckNear("new benchmark frame discards old volume history", result[0], 4.0f);
+	CheckNear("new volume history starts at one", capture.lastMoments[2], 1.0f);
+
+	fixture_t steady(1, 1);
+	steady.params.denoiseDebugSignal = 2;
+	SetVolumeNoise(steady, 8, 0);
+	for (int c = 0; c < 3; c++) steady.radiance[c] = steady.volume[c] = 1.0f;
+	for (int frame = 0; frame < 40; frame++) steady.Filter();
+	CheckNear("real-time volume history is capped separately", steady.lastMoments[2], 16.0f);
+	for (int c = 0; c < 3; c++) steady.radiance[c] = steady.volume[c] = 2.0f;
+	result = steady.Filter();
+	CheckNear("volume lighting change rejects stale history", steady.lastMoments[3], PT_DENOISE_LIGHTING);
+	CheckNear("volume lighting change has no stale trail", result[0], 2.0f);
+
+	fixture_t sky(31, 23);
+	sky.params.captureTargetFrames = 1;
+	SetVolumeNoise(sky, 8, 0);
+	for (auto& guide : sky.guides) {
+		guide.depth = 0.0f;
+		guide.coverage = PT_DENOISE_MISS;
+		guide.historyValid = 0;
+	}
+	result = sky.Filter();
+	if (SquaredError(result) >= SquaredError(sky.radiance) * 0.25) {
+		std::fprintf(stderr, "Offline volume on miss rays must also reduce squared error by at least 75%%\n");
+		std::exit(1);
+	}
+	const std::vector<float> skyVolume = result;
+	for (int c = 0; c < 3; c++) sky.radiance[bright * 4 + c] += 20.0f;
+	result = sky.Filter(false);
+	for (size_t i = 0; i < result.size(); i++) {
+		if (i % 4 != 3) CheckNear("sky emission stays sharp beside denoised miss-ray volume",
+			result[i] - skyVolume[i], i / 4 == bright ? 20.0f : 0.0f, 3e-5f);
+	}
+	sky.guides[bright].coverage = PT_DENOISE_MIXED;
+	sky.accumulation = sky.radiance;
+	sky.accumulation[bright * 4] = 7.0f;
+	result = sky.Filter();
+	CheckNear("mixed silhouette retains raw fog instead of borrowing sky history", result[bright * 4], 7.0f);
+}
+
 static void CheckDiagnostics() {
 	fixture_t f(6, 1);
 	for (int i = 0; i < 6; i++) f.guides[i].coverage = i;
@@ -533,6 +708,7 @@ int main() {
 	CheckFreshSignalAndFallback();
 	CheckHistoryRejection();
 	CheckSeparatedSignals();
+	CheckVolumeSignals();
 	CheckDiagnostics();
 	CheckProgressiveCapture();
 	std::puts("CUDA SVGF regression checks passed");

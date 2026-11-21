@@ -3,8 +3,10 @@
 #ifdef HAVE_PATHTRACER
 
 #include "framework/Console.h"
+#include "framework/Session.h"
 #include "renderer/tr_local.h"
 #include "renderer_pt/pt_render.h"
+#include "renderer_pt/pt_benchmark.h"
 
 /*
 ========================
@@ -37,6 +39,10 @@ R_PT_Compare_f
 ========================
 */
 void R_PT_Compare_f(const idCmdArgs& args) {
+	if ( RB_PT_IsCapturing() ) {
+		common->Warning( "A path tracer capture/benchmark is active; use r_ptAbort first" );
+		return;
+	}
 	if (!RB_PT_IsSupported()) {
 		common->Printf("Path tracer is not available (no usable r_ptBackend)\n");
 		return;
@@ -183,8 +189,13 @@ static bool cuSeq_saved_ptDraw = false;
 static bool cuSeq_saved_accumulation = false;
 
 int RB_PT_GetCaptureTargetFrames( void ) {
+	if ( R_PT_BenchmarkActive() ) return R_PT_BenchmarkTargetFrames();
 	if (cuSeq_state == CUSEQ_ACCUMULATE || cuSeq_state == CUSEQ_SCREENSHOT) return cuSeq_targetSamples;
 	return cuCmp_state == CUCOMP_WAIT_CU_SAMPLES ? cuCmp_targetSamples : 0;
+}
+
+bool RB_PT_IsCapturing( void ) {
+	return cuSeq_state != CUSEQ_IDLE || cuCmp_state != CUCOMP_IDLE || R_PT_BenchmarkActive();
 }
 
 /*
@@ -193,6 +204,10 @@ R_PT_Sequence_f
 ========================
 */
 void R_PT_Sequence_f(const idCmdArgs& args) {
+	if ( R_PT_BenchmarkActive() ) {
+		common->Warning( "A path tracer benchmark is active; use r_ptAbort first" );
+		return;
+	}
 	if (!RB_PT_IsSupported()) {
 		common->Printf("Path tracer is not available (no usable r_ptBackend)\n");
 		return;
@@ -477,6 +492,12 @@ R_PT_Abort_f
 ========================
 */
 void R_PT_Abort_f(const idCmdArgs& args) {
+	if ( R_PT_BenchmarkActive() ) {
+		R_PT_EndBenchmark( false );
+		session->Stop();
+		session->StartMenu();
+		return;
+	}
 	if (!RB_PT_IsSupported()) {
 		common->Printf("Path tracer is not available (no usable r_ptBackend)\n");
 		return;

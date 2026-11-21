@@ -27,7 +27,7 @@ kernel: they are only dereferenceable on HMM/ATS capable systems.
 */
 extern "C" void LaunchPathTracingKernel( const ptCudaSceneView_t *scene, float *accumBuffer,
 										 float *radianceBuffer, ptCudaDenoiseGuide_t *guideBuffer,
-										 float *diffuseBuffer, float *specularBuffer,
+										 float *diffuseBuffer, float *specularBuffer, float *volumeBuffer,
 										 const ptRenderParams_t *params, cudaStream_t stream ) {
 	const ptRenderParams_t p = *params;
 
@@ -67,7 +67,7 @@ extern "C" void LaunchPathTracingKernel( const ptCudaSceneView_t *scene, float *
 		default:
 			PathTracingKernel<<<gridSize, blockSize, 0, stream>>>(
 				s.vertices, s.triangles, s.bvhNodes, s.triIndices, s.materials, s.textures, s.lights, s.numLights,
-				accumBuffer, p, radianceBuffer, guideBuffer, diffuseBuffer, specularBuffer );
+				accumBuffer, p, radianceBuffer, guideBuffer, diffuseBuffer, specularBuffer, volumeBuffer );
 			break;
 	}
 }
@@ -85,7 +85,15 @@ extern "C" cudaError_t LaunchDenoisingKernel( const ptCudaDenoiseBuffers_t *buff
 		const cudaError_t error = cudaGetLastError();
 		if ( error != cudaSuccess ) return error;
 	}
-	for ( int signal = 0; signal < 2; signal++ ) {
+	bool volumeHistoryValid = historyValid != 0;
+	// Fog is view dependent and the physical medium moves with the camera.
+	for ( int c = 0; c < 3; c++ ) {
+		volumeHistoryValid &= p.camPos[c] == previousParams->camPos[c]
+			&& p.camForward[c] == previousParams->camForward[c]
+			&& p.camRight[c] == previousParams->camRight[c] && p.camUp[c] == previousParams->camUp[c];
+	}
+	volumeHistoryValid &= p.fovX == previousParams->fovX && p.fovY == previousParams->fovY;
+	for ( int signal = 0; signal < 3; signal++ ) {
 		const ptCudaDenoiseSignal_t &s = b.signals[signal];
 		if ( p.captureTargetFrames > 0 ) {
 			SVGFCaptureKernel<<<gridSize, blockSize, 0, stream>>>(
@@ -94,10 +102,17 @@ extern "C" cudaError_t LaunchDenoisingKernel( const ptCudaDenoiseBuffers_t *buff
 		} else {
 			SVGFTemporalKernel<<<gridSize, blockSize, 0, stream>>>(
 				s.radiance, b.guides[frameSlot], b.guides[prev], s.history[prev], s.moments[prev],
-				filteredBuffer, s.moments[frameSlot], p, *previousParams, historyValid, signal );
+				filteredBuffer, s.moments[frameSlot], p, *previousParams,
+				signal == 2 ? (volumeHistoryValid ? 1 : 0) : historyValid, signal );
 		}
 		cudaError_t error = cudaGetLastError();
 		if ( error != cudaSuccess ) return error;
+		if ( signal == 2 && p.captureTargetFrames > 0 ) {
+			SVGFBootstrapVolumeVarianceKernel<<<gridSize, blockSize, 0, stream>>>(
+				filteredBuffer, b.guides[frameSlot], s.moments[frameSlot], p.width, p.height, p.frameIndex );
+			error = cudaGetLastError();
+			if ( error != cudaSuccess ) return error;
+		}
 		const float *input = filteredBuffer;
 		for ( int iteration = 0; iteration < 4; iteration++ ) {
 			float *output = iteration == 0 ? s.history[frameSlot] : ( iteration == 2 ? filteredBuffer : b.scratch );
@@ -108,15 +123,17 @@ extern "C" cudaError_t LaunchDenoisingKernel( const ptCudaDenoiseBuffers_t *buff
 			if ( error != cudaSuccess ) return error;
 			input = output;
 		}
-		if ( signal == 0 ) {
-			SVGFStoreDiffuseKernel<<<gridSize, blockSize, 0, stream>>>(
-				input, b.guides[frameSlot], b.filteredDiffuse, p.width, p.height );
+		if ( signal < 2 ) {
+			SVGFStoreSurfaceKernel<<<gridSize, blockSize, 0, stream>>>(
+				input, b.guides[frameSlot], signal == 0 ? b.filteredDiffuse : b.filteredSpecular,
+				p.width, p.height, signal );
 		} else {
 			SVGFResolveKernel<<<gridSize, blockSize, 0, stream>>>(
-				input, b.filteredDiffuse, p.captureTargetFrames > 0 ? accumBuffer : b.radiance,
+				input, b.filteredDiffuse, b.filteredSpecular, p.captureTargetFrames > 0 ? accumBuffer : b.radiance,
 				p.captureTargetFrames > 0 ? b.signals[0].history[frameSlot] : b.signals[0].radiance,
 				p.captureTargetFrames > 0 ? b.signals[1].history[frameSlot] : b.signals[1].radiance,
-				accumBuffer, b.guides[frameSlot], filteredBuffer, p.width, p.height, p.denoiseDebug );
+				p.captureTargetFrames > 0 ? b.signals[2].history[frameSlot] : b.signals[2].radiance,
+				accumBuffer, b.guides[frameSlot], filteredBuffer, p.width, p.height, p.denoiseDebug, p.captureTargetFrames > 0 );
 		}
 		error = cudaGetLastError();
 		if ( error != cudaSuccess ) return error;
@@ -129,7 +146,7 @@ extern "C" cudaError_t LaunchDenoisingDebugKernel( const ptCudaDenoiseBuffers_t 
 	const ptRenderParams_t &p = *params;
 	const dim3 blockSize( TILE_SIZE, TILE_SIZE );
 	const dim3 gridSize( ( p.width + TILE_SIZE - 1 ) / TILE_SIZE, ( p.height + TILE_SIZE - 1 ) / TILE_SIZE );
-	const ptCudaDenoiseSignal_t &s = buffers->signals[p.denoiseDebugSignal == 1 ? 1 : 0];
+	const ptCudaDenoiseSignal_t &s = buffers->signals[p.denoiseDebugSignal == 2 ? 2 : (p.denoiseDebugSignal == 1 ? 1 : 0)];
 	SVGFDenoiseDebugKernel<<<gridSize, blockSize, 0, stream>>>(
 		buffers->guides[frameSlot], s.moments[frameSlot], s.history[frameSlot],
 		output, p.width, p.height, p.denoiseDebug, p.captureTargetFrames > 0 );

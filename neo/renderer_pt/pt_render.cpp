@@ -7,8 +7,12 @@
 #include "renderer/tr_local.h"
 #include "renderer_pt/pt_quality_preset.h"
 #include "renderer_pt/pt_render.h"
+#include "renderer_pt/pt_benchmark.h"
 #include "renderer_pt/pt_scene.h"
 #include "renderer_pt/pt_physical.h"
+#ifdef PT_PHYSICAL
+#include "renderer_pt/pt_material_editor.h"
+#endif
 
 /*
 ===============================================================================
@@ -64,8 +68,8 @@ idCVar r_ptSoftShadowScale( "r_ptSoftShadowScale", "0.2", CVAR_RENDERER | CVAR_A
 // display
 idCVar r_ptDenoise( "r_ptDenoise", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "SVGF temporal/variance-guided denoising for path tracing (raw accumulation is preserved)" );
 idCVar r_ptDenoiseStrength( "r_ptDenoiseStrength", "0.5", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "SVGF variance-guided luminance sigma scale: higher values smooth more", 0.05f, 4.0f );
-idCVar r_ptDenoiseDebug( "r_ptDenoiseDebug", "0", CVAR_RENDERER | CVAR_INTEGER, "Denoising diagnostics: 0 beauty, 1 coverage, 2 history, 3 relative noise, 4 rejection, 5 diffuse, 6 specular", 0, 6 );
-idCVar r_ptDenoiseDebugSignal( "r_ptDenoiseDebugSignal", "0", CVAR_RENDERER | CVAR_INTEGER, "Signal for history/noise/rejection diagnostics: 0 diffuse, 1 specular", 0, 1 );
+idCVar r_ptDenoiseDebug( "r_ptDenoiseDebug", "0", CVAR_RENDERER | CVAR_INTEGER, "Denoising diagnostics: 0 beauty, 1 coverage, 2 history, 3 relative noise, 4 rejection, 5 diffuse, 6 specular, 7 volume", 0, 7 );
+idCVar r_ptDenoiseDebugSignal( "r_ptDenoiseDebugSignal", "0", CVAR_RENDERER | CVAR_INTEGER, "Signal for history/noise/rejection diagnostics: 0 diffuse, 1 specular, 2 volume", 0, 2 );
 idCVar r_ptExposure( "r_ptExposure", "1.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "exposure multiplier" );
 idCVar r_ptGamma( "r_ptGamma", "2.2", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "output gamma, textures and colors are decoded with 2.2", 0.1f, 10.0f );
 idCVar r_ptToneMapMode( "r_ptToneMapMode", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "0 = Reinhard, 1 = ACES, 2 = Uncharted 2", 0, 2 );
@@ -363,7 +367,8 @@ void R_PT_InitCommands( void ) {
 	cmdSystem->AddCommand( "r_ptReset", PT_Reset_f, CMD_FL_RENDERER, "restarts accumulation and drops cached materials / textures" );
 	cmdSystem->AddCommand( "r_ptCompare", R_PT_Compare_f, CMD_FL_RENDERER, "saves an OpenGL and a converged path traced screenshot of the current view" );
 	cmdSystem->AddCommand( "r_ptSequence", R_PT_Sequence_f, CMD_FL_RENDERER, "path traces a range of demo frames to screenshots" );
-	cmdSystem->AddCommand( "r_ptAbort", R_PT_Abort_f, CMD_FL_RENDERER, "aborts r_ptCompare / r_ptSequence" );
+	cmdSystem->AddCommand( "r_ptBenchmark", R_PT_Benchmark_f, CMD_FL_RENDERER, "benchmark and save every recorded render demo frame at a fixed spp target", idCmdSystem::ArgCompletion_DemoName );
+	cmdSystem->AddCommand( "r_ptAbort", R_PT_Abort_f, CMD_FL_RENDERER, "aborts r_ptCompare / r_ptSequence / r_ptBenchmark" );
 }
 
 /*
@@ -427,6 +432,7 @@ static void PT_SetupParams( ptRenderParams_t &p, const viewDef_t *viewDef, int t
 	p.renderMode = r_ptMode.GetInteger();
 
 	p.samplesPerPixel = r_ptSamplesPerPixel.GetInteger();
+	if ( R_PT_BenchmarkActive() ) p.samplesPerPixel = R_PT_BenchmarkBatch();
 	p.maxDepth = r_ptMaxDepth.GetInteger();
 	p.maxLightSamples = r_ptMaxLightSamples.GetInteger();
 	p.indirectProb = r_ptIndirectProb.GetFloat();
@@ -635,6 +641,17 @@ bool RB_PT_DrawView( void ) {
 	ptRenderParams_t params;
 	PT_SetupParams( params, viewDef, traceWidth, traceHeight );
 
+#ifdef PT_PHYSICAL
+	static unsigned int materialRevision = 0;
+	const unsigned int currentMaterialRevision = R_PT_MaterialOverrideRevision();
+	if ( materialRevision != currentMaterialRevision ) {
+		pt.scene->InvalidateMaterials();
+		pt.backend->ResetAccumulation();
+		pt.havePrev = false;
+		materialRevision = currentMaterialRevision;
+	}
+#endif
+
 	const float lightScale = Max( 0.0f, r_lightScale.GetFloat() );
 	const bool frozenCapture = params.captureTargetFrames > 0 && pt.havePrev && pt.prevParams.captureTargetFrames > 0
 		&& pt.backend->GetAccumulatedFrames() > 0 && !PT_TraceSettingsChanged( params, pt.prevParams )
@@ -705,6 +722,11 @@ bool RB_PT_DrawView( void ) {
 
 	RB_BeginDrawingView();
 	PT_BlitToViewport( pt.pixels.Ptr(), traceWidth, traceHeight );
+	if ( R_PT_BenchmarkActive() && !tr.takingScreenshot ) {
+		ptBackendStats_t stats;
+		pt.backend->GetStats( stats );
+		R_PT_BenchmarkRendered( pt.backend->GetAccumulatedFrames(), stats.traceMs, traceWidth, traceHeight );
+	}
 
 	if ( r_ptDebug.GetBool() ) {
 		ptBackendStats_t stats;
@@ -713,6 +735,23 @@ bool RB_PT_DrawView( void ) {
 			stats.numTriangles, stats.numLights, pt.backend->GetAccumulatedFrames(), stats.traceMs );
 	}
 	return true;
+}
+
+bool RB_PT_SaveImage( const char *fileName, int format ) {
+	const int width = pt.texWidth, height = pt.texHeight;
+	if ( width <= 0 || height <= 0 || pt.pixels.Num() != width * height * 4 ) {
+		common->Warning( "No complete path-traced image available for '%s'", fileName );
+		return false;
+	}
+	idList<byte> rgb;
+	rgb.SetNum( width * height * 3 );
+	for ( int y = 0; y < height; y++ ) {
+		for ( int x = 0; x < width; x++ ) {
+			const byte *source = pt.pixels.Ptr() + ( ( height - 1 - y ) * width + x ) * 4;
+			memcpy( rgb.Ptr() + ( y * width + x ) * 3, source, 3 );
+		}
+	}
+	return R_WriteScreenshotImage( fileName, rgb.Ptr(), width, height, format );
 }
 
 #endif // HAVE_PATHTRACER

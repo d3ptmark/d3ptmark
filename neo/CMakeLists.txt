@@ -703,12 +703,13 @@ if(HAVE_CUDA)
 	list(APPEND src_renderer
 		renderer_pt/pt_render.cpp
 		renderer_pt/pt_commands.cpp
+		renderer_pt/pt_benchmark.cpp
 		renderer_pt/pt_scene.cpp
 		renderer_pt/pt_scene_material.cpp
 		renderer_pt/cuda/pt_backend_cuda.cpp
 	)
 	if(PT_PHYSICAL)
-		list(APPEND src_renderer renderer_pt/pt_physical.cpp)
+		list(APPEND src_renderer renderer_pt/pt_physical.cpp renderer_pt/pt_material_editor.cpp)
 	endif()
 
 	list(APPEND src_renderer_pt_device
@@ -1329,6 +1330,11 @@ include_directories(${CMAKE_BINARY_DIR})
 include_directories(${CMAKE_SOURCE_DIR})
 
 add_library(idlib STATIC ${src_idlib})
+if(HAVE_CUDA)
+	enable_testing()
+	add_executable(pt_benchmark_test renderer_pt/tests/pt_benchmark_test.cpp)
+	add_test(pt_benchmark pt_benchmark_test)
+endif()
 if(PT_MATERIAL_CACHE_TESTS)
 	enable_testing()
 	add_executable(pt_material_cache_test renderer_pt/tests/pt_material_cache_test.cpp)
@@ -1365,6 +1371,9 @@ if(PT_CUDA_DENOISING_TESTS)
 endif()
 if(PT_PHYSICAL)
 	enable_testing()
+	add_executable(pt_material_editor_test renderer_pt/tests/pt_material_editor_test.cpp)
+	target_link_libraries(pt_material_editor_test idlib)
+	add_test(pt_material_editor pt_material_editor_test)
 	add_executable(pt_cuda_physical_test renderer_pt/tests/pt_cuda_physical_test.cu)
 	add_test(pt_cuda_physical pt_cuda_physical_test)
 	set_tests_properties(pt_cuda_physical PROPERTIES SKIP_RETURN_CODE 77)
