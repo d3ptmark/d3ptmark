@@ -7,6 +7,8 @@
 #include "renderer/tr_local.h"
 #include "renderer_pt/pt_render.h"
 #include "renderer_pt/pt_benchmark.h"
+#include "renderer_pt/pt_capture_report.h"
+#include "framework/UsercmdGen.h"
 
 /*
 ========================
@@ -28,10 +30,24 @@ static int cuCmp_glFramesWaited = 0;
 static idStr cuCmp_glFilename;
 static idStr cuCmp_cuFilename;
 static int cuCmp_screenshotNumber = 0;
+static int cuCmp_batch = 1;
+static bool cuCmp_savedDraw = false, cuCmp_savedAccumulation = false;
+static int cuCmp_savedMode = 0;
 
 // extern console variables
 extern idCVar r_ptDraw;
 extern idCVar r_ptAccumulation;
+extern idCVar r_ptMode;
+extern idCVar r_ptSamplesPerPixel;
+
+static void PT_CompareFinish( bool completed, const char *reason ) {
+	R_PT_ReportEnd( completed, reason );
+	r_ptDraw.SetBool( cuCmp_savedDraw );
+	r_ptAccumulation.SetBool( cuCmp_savedAccumulation );
+	r_ptMode.SetInteger( cuCmp_savedMode );
+	if ( RB_PT_GetBackend() ) RB_PT_GetBackend()->ResetAccumulation();
+	cuCmp_state = CUCOMP_IDLE;
+}
 
 /*
 ========================
@@ -49,13 +65,18 @@ void R_PT_Compare_f(const idCmdArgs& args) {
 	}
 
 	// parse target sample count
-	if (args.Argc() >= 2) {
-		cuCmp_targetSamples = atoi(args.Argv(1));
-		if (cuCmp_targetSamples < 1) cuCmp_targetSamples = 1;
-		if (cuCmp_targetSamples > 10000) cuCmp_targetSamples = 10000;
-	} else {
-		cuCmp_targetSamples = 64;
+	if (args.Argc() > 2 || (args.Argc() == 2 && !PT_ParseBenchmarkSamples( args.Argv(1), cuCmp_targetSamples ))) {
+		common->Warning( "Usage: r_ptCompare [spp 1..100000]" );
+		return;
 	}
+	if (args.Argc() == 1) cuCmp_targetSamples = 64;
+	cuCmp_batch = PT_BenchmarkBatchSize( cuCmp_targetSamples, r_ptSamplesPerPixel.GetInteger() );
+	if ( !R_PT_ReportBegin( args, "compare", session->GetCurrentMapName(), cuCmp_targetSamples ) ) return;
+	cuCmp_savedDraw = r_ptDraw.GetBool();
+	cuCmp_savedAccumulation = r_ptAccumulation.GetBool();
+	cuCmp_savedMode = r_ptMode.GetInteger();
+	r_ptAccumulation.SetBool( true );
+	r_ptMode.SetInteger( PT_MODE_PATHTRACE );
 
 	// generate filenames
 	cuCmp_screenshotNumber++;
@@ -69,8 +90,9 @@ void R_PT_Compare_f(const idCmdArgs& args) {
 		default: ext = "tga"; break;
 	}
 
-	cuCmp_glFilename = va("screenshots/compare_%04d_opengl.%s", cuCmp_screenshotNumber, ext);
-	cuCmp_cuFilename = va("screenshots/compare_%04d_pt_%dspp.%s", cuCmp_screenshotNumber, cuCmp_targetSamples, ext);
+	const char *directory = R_PT_ReportDirectory() ? R_PT_ReportDirectory() : "screenshots";
+	cuCmp_glFilename = va("%s/compare_%04d_opengl.%s", directory, cuCmp_screenshotNumber, ext);
+	cuCmp_cuFilename = va("%s/compare_%04d_pt_%dspp.%s", directory, cuCmp_screenshotNumber, cuCmp_targetSamples, ext);
 
 	common->Printf("\n=== Path Tracer Compare ===");
 	common->Printf("\n  Target samples: %d", cuCmp_targetSamples);
@@ -91,11 +113,13 @@ RB_PT_CompareCheck
 ========================
 */
 void RB_PT_CompareCheck( void ) {
+	R_PT_ReportTick();
 	switch (cuCmp_state) {
 		// switch to OpenGL renderer
 		case CUCOMP_SWITCH_TO_GL:
 		{
 			r_ptDraw.SetBool(false);
+			R_PT_ReportFrameBegin( 0, 0, "opengl" );
 			cuCmp_glFramesWaited = 0;
 			cuCmp_state = CUCOMP_WAIT_GL_FRAME;
 			common->Printf("[cucomp] Switching to OpenGL renderer...\n");
@@ -116,11 +140,20 @@ void RB_PT_CompareCheck( void ) {
 		// take the OpenGL screenshot
 		case CUCOMP_TAKE_GL_SCREENSHOT:
 		{
+			const double saveStart = Sys_MillisecondsPrecise();
+			R_PT_ReportPhase( "image_save" );
 			tr.TakeScreenshot(glConfig.vidWidth, glConfig.vidHeight, cuCmp_glFilename.c_str(), 1, NULL);
+			if ( !R_ScreenshotWriteSucceeded() || !R_PT_ReportFrameEnd( cuCmp_glFilename,
+				glConfig.vidWidth, glConfig.vidHeight, Sys_MillisecondsPrecise() - saveStart ) ) {
+				PT_CompareFinish( false, "opengl_capture_failed" );
+				return;
+			}
 			common->Printf("[cucomp] OpenGL screenshot saved: %s\n", cuCmp_glFilename.c_str());
 			// switch back to path tracer
 			r_ptDraw.SetBool(true);
+			if ( RB_PT_GetBackend() ) RB_PT_GetBackend()->ResetAccumulation();
 			cuCmp_state = CUCOMP_WAIT_CU_SAMPLES;
+			R_PT_ReportFrameBegin( 0, 0, "pathtrace" );
 			common->Printf("[cucomp] Switching to path tracer, accumulating %d samples...\n", cuCmp_targetSamples);
 			break;
 		}
@@ -129,21 +162,28 @@ void RB_PT_CompareCheck( void ) {
 		case CUCOMP_WAIT_CU_SAMPLES:
 		{
 			if (RB_PT_GetBackend()) {
-				int currentSamples = RB_PT_GetBackend()->GetAccumulatedFrames();
+				int currentSamples = RB_PT_GetBackend()->GetAccumulatedFrames() * cuCmp_batch;
 				if (currentSamples > 0 && currentSamples % (cuCmp_targetSamples / 10 + 1) == 0) {
 					common->Printf("[cucomp] Accumulating... %d / %d samples\n", currentSamples, cuCmp_targetSamples);
 				}
 
 				if (currentSamples >= cuCmp_targetSamples) {
+					const double saveStart = Sys_MillisecondsPrecise();
+					R_PT_ReportPhase( "image_save" );
 					tr.TakeScreenshot(glConfig.vidWidth, glConfig.vidHeight, cuCmp_cuFilename.c_str(), 1, NULL);
+					if ( !R_ScreenshotWriteSucceeded() || !R_PT_ReportFrameEnd( cuCmp_cuFilename,
+						glConfig.vidWidth, glConfig.vidHeight, Sys_MillisecondsPrecise() - saveStart ) ) {
+						PT_CompareFinish( false, "pt_capture_failed" );
+						return;
+					}
 					common->Printf("[cucomp] Path tracer screenshot saved: %s (%d samples)\n",
 						cuCmp_cuFilename.c_str(), currentSamples);
 					common->Printf("[cucomp] Comparison complete!\n");
-					cuCmp_state = CUCOMP_IDLE;
+					PT_CompareFinish( true, "" );
 				}
 			} else {
 				common->Warning("[cucomp] Path tracer not available, aborting comparison\n");
-				cuCmp_state = CUCOMP_IDLE;
+				PT_CompareFinish( false, "backend_unavailable" );
 			}
 			break;
 		}
@@ -187,15 +227,23 @@ static int cuSeq_saved_fixedTic = 0;
 static bool cuSeq_saved_stopTime = false;
 static bool cuSeq_saved_ptDraw = false;
 static bool cuSeq_saved_accumulation = false;
+static int cuSeq_saved_mode = 0, cuSeq_batch = 1;
+static bool cuSeq_failed = false;
 
 int RB_PT_GetCaptureTargetFrames( void ) {
 	if ( R_PT_BenchmarkActive() ) return R_PT_BenchmarkTargetFrames();
-	if (cuSeq_state == CUSEQ_ACCUMULATE || cuSeq_state == CUSEQ_SCREENSHOT) return cuSeq_targetSamples;
-	return cuCmp_state == CUCOMP_WAIT_CU_SAMPLES ? cuCmp_targetSamples : 0;
+	if (cuSeq_state == CUSEQ_ACCUMULATE || cuSeq_state == CUSEQ_SCREENSHOT) return cuSeq_targetSamples / cuSeq_batch;
+	return cuCmp_state == CUCOMP_WAIT_CU_SAMPLES ? cuCmp_targetSamples / cuCmp_batch : 0;
+}
+
+int RB_PT_GetCaptureBatch() {
+	if ( R_PT_BenchmarkActive() ) return R_PT_BenchmarkBatch();
+	if ( cuSeq_state != CUSEQ_IDLE ) return cuSeq_batch;
+	return cuCmp_batch;
 }
 
 bool RB_PT_IsCapturing( void ) {
-	return cuSeq_state != CUSEQ_IDLE || cuCmp_state != CUCOMP_IDLE || R_PT_BenchmarkActive();
+	return cuSeq_state != CUSEQ_IDLE || cuCmp_state != CUCOMP_IDLE || R_BenchmarkActive() || R_GLSequenceActive();
 }
 
 /*
@@ -223,7 +271,7 @@ void R_PT_Sequence_f(const idCmdArgs& args) {
 		return;
 	}
 
-	if (args.Argc() < 3) {
+	if (args.Argc() < 3 || args.Argc() > 4) {
 		common->Printf("Usage: r_ptSequence <frame_start> <frame_end> [samples]\n");
 		common->Printf("  frame_start  - First game frame to render (0+)\n");
 		common->Printf("  frame_end    - Last game frame to render (inclusive)\n");
@@ -233,10 +281,11 @@ void R_PT_Sequence_f(const idCmdArgs& args) {
 		return;
 	}
 
-	cuSeq_frameStart = atoi(args.Argv(1));
-	cuSeq_frameEnd = atoi(args.Argv(2));
-
-	if (cuSeq_frameStart < 0) cuSeq_frameStart = 0;
+	if ( !PT_ParseCaptureFrame( args.Argv(1), cuSeq_frameStart )
+		|| !PT_ParseCaptureFrame( args.Argv(2), cuSeq_frameEnd ) ) {
+		common->Warning( "PT sequence frame numbers must be nonnegative integers below INT_MAX" );
+		return;
+	}
 	if (cuSeq_frameEnd < cuSeq_frameStart) {
 		common->Printf("[cuseq] Error: frame_end (%d) must be >= frame_start (%d)\n",
 			cuSeq_frameEnd, cuSeq_frameStart);
@@ -244,14 +293,19 @@ void R_PT_Sequence_f(const idCmdArgs& args) {
 	}
 
 	if (args.Argc() >= 4) {
-		cuSeq_targetSamples = atoi(args.Argv(3));
-		if (cuSeq_targetSamples < 1) cuSeq_targetSamples = 1;
-		if (cuSeq_targetSamples > 100000) cuSeq_targetSamples = 100000;
+		if ( !PT_ParseBenchmarkSamples( args.Argv(3), cuSeq_targetSamples ) ) {
+			common->Warning( "PT sequence spp must be an integer from 1 to 100000" );
+			return;
+		}
 	} else {
 		cuSeq_targetSamples = 256;
 	}
 
 	int totalFrames = cuSeq_frameEnd - cuSeq_frameStart + 1;
+	cuSeq_batch = PT_BenchmarkBatchSize( cuSeq_targetSamples, r_ptSamplesPerPixel.GetInteger() );
+	if ( !R_PT_ReportBegin( args, "sequence", session->GetCurrentMapName(), cuSeq_targetSamples,
+		cuSeq_frameStart, cuSeq_frameEnd ) ) return;
+	cuSeq_failed = false;
 
 	common->Printf("\n=== Path Tracer Sequence Render ===\n");
 	common->Printf("  Frames:        %d - %d (%d total)\n", cuSeq_frameStart, cuSeq_frameEnd, totalFrames);
@@ -259,7 +313,8 @@ void R_PT_Sequence_f(const idCmdArgs& args) {
 	if (cuSeq_frameStart > 0) {
 		common->Printf("  Fast-forward:  %d frames via OpenGL\n", cuSeq_frameStart);
 	}
-	common->Printf("  Output:        screenshots/ptseq_NNNNN.<ext>\n");
+	common->Printf("  Output:        %s/ptseq_NNNNN.<ext>\n",
+		R_PT_ReportDirectory() ? R_PT_ReportDirectory() : "screenshots");
 	common->Printf("============================\n\n");
 
 	// close console so it doesn't appear in screenshots
@@ -275,6 +330,7 @@ RB_PT_SequenceCheck
 ========================
 */
 void RB_PT_SequenceCheck( void ) {
+	R_PT_ReportTick();
 	if (cuSeq_state == CUSEQ_IDLE) {
 		return;
 	}
@@ -289,6 +345,8 @@ void RB_PT_SequenceCheck( void ) {
             cuSeq_saved_fixedTic = cvarSystem->GetCVarInteger("com_fixedTic");
             cuSeq_saved_ptDraw = r_ptDraw.GetBool();
             cuSeq_saved_accumulation = r_ptAccumulation.GetBool();
+            cuSeq_saved_mode = r_ptMode.GetInteger();
+            r_ptMode.SetInteger( PT_MODE_PATHTRACE );
 
             // set com_fixedTic 1 for deterministic single-tick stepping
             cvarSystem->SetCVarInteger("com_fixedTic", 1);
@@ -309,6 +367,7 @@ void RB_PT_SequenceCheck( void ) {
                 }
                 cuSeq_currentFrame = 0;
                 cuSeq_state = CUSEQ_ADVANCE_WAIT;
+                R_PT_ReportPhase( "advance" );
                 common->Printf("[cuseq] Fast-forwarding to frame %d using OpenGL renderer...\n", cuSeq_frameStart);
             } else {
                 // start from frame 0 — enable path tracer and freeze immediately
@@ -322,6 +381,7 @@ void RB_PT_SequenceCheck( void ) {
                     RB_PT_GetBackend()->ResetAccumulation();
                 }
                 cuSeq_state = CUSEQ_ACCUMULATE;
+                R_PT_ReportFrameBegin( cuSeq_currentFrame, cuSeq_currentFrame * ( USERCMD_MSEC * 0.001 ), "pathtrace" );
                 common->Printf("[cuseq] Frame %d / %d: accumulating %d samples...\n",
                     cuSeq_currentFrame, cuSeq_frameEnd, cuSeq_targetSamples);
             }
@@ -332,7 +392,7 @@ void RB_PT_SequenceCheck( void ) {
         {
             // accumulate path tracer samples on the frozen game frame
             if (RB_PT_GetBackend()) {
-                int currentSamples = RB_PT_GetBackend()->GetAccumulatedFrames();
+                int currentSamples = RB_PT_GetBackend()->GetAccumulatedFrames() * cuSeq_batch;
 
                 // progress reporting every 25%
                 int quarter = cuSeq_targetSamples / 4;
@@ -348,6 +408,7 @@ void RB_PT_SequenceCheck( void ) {
                 }
             } else {
                 common->Warning("[cuseq] Path tracer not available, aborting.\n");
+                cuSeq_failed = true;
                 cuSeq_state = CUSEQ_DONE;
             }
             break;
@@ -365,8 +426,17 @@ void RB_PT_SequenceCheck( void ) {
                 default: ext = "tga"; break;
             }
 
-            idStr filename = va("screenshots/ptseq_%05d.%s", cuSeq_currentFrame, ext);
+            idStr filename = va("%s/ptseq_%05d.%s",
+                R_PT_ReportDirectory() ? R_PT_ReportDirectory() : "screenshots", cuSeq_currentFrame, ext);
+            const double saveStart = Sys_MillisecondsPrecise();
+            R_PT_ReportPhase( "image_save" );
             tr.TakeScreenshot(glConfig.vidWidth, glConfig.vidHeight, filename.c_str(), 1, NULL);
+            if ( !R_ScreenshotWriteSucceeded() || !R_PT_ReportFrameEnd( filename,
+                glConfig.vidWidth, glConfig.vidHeight, Sys_MillisecondsPrecise() - saveStart ) ) {
+                cuSeq_failed = true;
+                cuSeq_state = CUSEQ_DONE;
+                break;
+            }
 
             int totalFrames = cuSeq_frameEnd - cuSeq_frameStart + 1;
             int framesDone = cuSeq_currentFrame - cuSeq_frameStart + 1;
@@ -387,6 +457,7 @@ void RB_PT_SequenceCheck( void ) {
 
         case CUSEQ_ADVANCE_UNPAUSE: 
         {
+            R_PT_ReportPhase( "advance" );
             // unpause the game so the next RunGameTic executes
             idCVar* stopTimeCVar = cvarSystem->Find("g_stoptime");
             if (stopTimeCVar) {
@@ -427,6 +498,7 @@ void RB_PT_SequenceCheck( void ) {
                     RB_PT_GetBackend()->ResetAccumulation();
                 }
                 cuSeq_state = CUSEQ_ACCUMULATE;
+                R_PT_ReportFrameBegin( cuSeq_currentFrame, cuSeq_currentFrame * ( USERCMD_MSEC * 0.001 ), "pathtrace" );
                 common->Printf("[cuseq] Frame %d / %d: accumulating %d samples...\n",
                     cuSeq_currentFrame, cuSeq_frameEnd, cuSeq_targetSamples);
             }
@@ -435,6 +507,7 @@ void RB_PT_SequenceCheck( void ) {
 
         case CUSEQ_DONE: 
         {
+            R_PT_ReportEnd( !cuSeq_failed, cuSeq_failed ? "sequence_capture_failed" : "" );
             // restore saved cvar values
             idCVar* stopTimeCVar = cvarSystem->Find("g_stoptime");
             if (stopTimeCVar) {
@@ -453,6 +526,7 @@ void RB_PT_SequenceCheck( void ) {
             cvarSystem->SetCVarInteger("com_fixedTic", restoreFixedTic);
             r_ptDraw.SetBool(cuSeq_saved_ptDraw);
             r_ptAccumulation.SetBool(cuSeq_saved_accumulation);
+            r_ptMode.SetInteger(cuSeq_saved_mode);
 
             common->Printf("[cuseq] Restored: g_stopTime=%d, com_fixedTic=%d, r_ptDraw=%d\n",
                 (int)cuSeq_saved_stopTime, restoreFixedTic, (int)cuSeq_saved_ptDraw);
@@ -461,7 +535,7 @@ void RB_PT_SequenceCheck( void ) {
             float totalSec = (float)(Sys_Milliseconds() - cuSeq_startTime) * 0.001f;
             int totalMin = (int)(totalSec / 60.0f);
             float remSec = totalSec - (float)(totalMin * 60);
-            common->Printf("\n=== Path Tracer Sequence Render Complete ===\n");
+            common->Printf("\n=== Path Tracer Sequence Render %s ===\n", cuSeq_failed ? "Aborted" : "Complete");
             common->Printf("  Rendered %d frames (%d - %d) at %d samples each.\n",
                 totalFrames, cuSeq_frameStart, cuSeq_frameEnd, cuSeq_targetSamples);
             common->Printf("  Total time: %dm %.1fs (%.1fs)\n", totalMin, remSec, totalSec);
@@ -493,13 +567,9 @@ R_PT_Abort_f
 */
 void R_PT_Abort_f(const idCmdArgs& args) {
 	if ( R_PT_BenchmarkActive() ) {
-		R_PT_EndBenchmark( false );
+		R_EndBenchmark( false );
 		session->Stop();
 		session->StartMenu();
-		return;
-	}
-	if (!RB_PT_IsSupported()) {
-		common->Printf("Path tracer is not available (no usable r_ptBackend)\n");
 		return;
 	}
 
@@ -509,6 +579,7 @@ void R_PT_Abort_f(const idCmdArgs& args) {
 	}
 
 	if (cuSeq_state != CUSEQ_IDLE) {
+		R_PT_ReportEnd( false, "sequence_aborted" );
 		common->Printf("[cuseq] Aborting sequence render at frame %d (was in state %d)...\n",
 			cuSeq_currentFrame, (int)cuSeq_state);
 
@@ -528,6 +599,7 @@ void R_PT_Abort_f(const idCmdArgs& args) {
 		cvarSystem->SetCVarInteger("com_fixedTic", restoreFixedTic);
 		r_ptDraw.SetBool(cuSeq_saved_ptDraw);
 		r_ptAccumulation.SetBool(cuSeq_saved_accumulation);
+		r_ptMode.SetInteger(cuSeq_saved_mode);
 
 		cuSeq_state = CUSEQ_IDLE;
 		common->Printf("[cuseq] Aborted. CVars restored.\n");
@@ -535,9 +607,14 @@ void R_PT_Abort_f(const idCmdArgs& args) {
 
 	if (cuCmp_state != CUCOMP_IDLE) {
 		common->Printf("[cucomp] Aborting comparison...\n");
-		cuCmp_state = CUCOMP_IDLE;
+		PT_CompareFinish( false, "compare_aborted" );
 		common->Printf("[cucomp] Aborted.\n");
 	}
+}
+
+void RB_PT_CancelCaptures() {
+	if ( R_PT_BenchmarkActive() ) R_EndBenchmark( false );
+	else if ( RB_PT_IsCapturing() ) R_PT_Abort_f( idCmdArgs() );
 }
 
 #endif // HAVE_PATHTRACER

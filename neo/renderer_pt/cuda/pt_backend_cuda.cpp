@@ -70,6 +70,7 @@ private:
 	cudaStream_t			stream;
 	cudaEvent_t				timerStart;
 	cudaEvent_t				timerStop;
+	cudaEvent_t				timerPath, timerDenoise, timerPostprocess;
 
 	// output
 	int						maxWidth;
@@ -81,6 +82,7 @@ private:
 	int						lastHeight;
 	int						accumFrames;
 	float					traceMs;
+	float					pathMs, denoiseMs, postprocessMs, toneMapMs;
 	ptCudaDenoiseBuffers_t	denoiser;
 	ptCudaPostprocessBuffers_t postprocess;
 	int						postWidth, postHeight, postScale;
@@ -130,6 +132,8 @@ idPathTracerBackendCUDA::idPathTracerBackendCUDA() {
 	stream = NULL;
 	timerStart = NULL;
 	timerStop = NULL;
+	timerPath = timerDenoise = timerPostprocess = NULL;
+	pathMs = denoiseMs = postprocessMs = toneMapMs = 0;
 
 	maxWidth = maxHeight = 0;
 	d_accum = NULL;
@@ -258,6 +262,9 @@ bool idPathTracerBackendCUDA::Init( int width, int height ) {
 	PT_CUDA_CHECK( cudaStreamCreate( &stream ) );
 	PT_CUDA_CHECK( cudaEventCreate( &timerStart ) );
 	PT_CUDA_CHECK( cudaEventCreate( &timerStop ) );
+	PT_CUDA_CHECK( cudaEventCreate( &timerPath ) );
+	PT_CUDA_CHECK( cudaEventCreate( &timerDenoise ) );
+	PT_CUDA_CHECK( cudaEventCreate( &timerPostprocess ) );
 
 	PT_CUDA_CHECK( cudaMalloc( &d_texDesc, PT_MAX_TEXTURES * sizeof( cudaTexture_t ) ) );
 	PT_CUDA_CHECK( cudaMemset( d_texDesc, 0, PT_MAX_TEXTURES * sizeof( cudaTexture_t ) ) );
@@ -318,6 +325,10 @@ void idPathTracerBackendCUDA::Shutdown() {
 		cudaEventDestroy( timerStop );
 		timerStop = NULL;
 	}
+	if ( timerPath ) cudaEventDestroy( timerPath );
+	if ( timerDenoise ) cudaEventDestroy( timerDenoise );
+	if ( timerPostprocess ) cudaEventDestroy( timerPostprocess );
+	timerPath = timerDenoise = timerPostprocess = NULL;
 	if ( stream ) {
 		cudaStreamDestroy( stream );
 		stream = NULL;
@@ -695,6 +706,7 @@ bool idPathTracerBackendCUDA::Render( const ptRenderParams_t &params ) {
 		denoise ? denoiser.signals[2].radiance : NULL, &p, stream );
 	PT_CUDA_CHECK( cudaGetLastError() );
 
+	PT_CUDA_CHECK( cudaEventRecord( timerPath, stream ) );
 	accumFrames++;
 	const float *hdrBuffer = d_accum;
 	if ( denoise ) {
@@ -702,14 +714,18 @@ bool idPathTracerBackendCUDA::Render( const ptRenderParams_t &params ) {
 			denoiseFrameSlot, denoiseHistoryValid ? 1 : 0, stream ) );
 		hdrBuffer = d_filtered;
 	}
+	PT_CUDA_CHECK( cudaEventRecord( timerDenoise, stream ) );
+	const bool hasPostprocess = accumulate && p.denoiseDebug == 0 && ( p.bloomStrength > 0.0f || p.lensFlareStrength > 0.0f );
 	if ( denoise && p.denoiseDebug >= 1 && p.denoiseDebug <= 4 ) {
+		PT_CUDA_CHECK( cudaEventRecord( timerPostprocess, stream ) );
 		PT_CUDA_CHECK( LaunchDenoisingDebugKernel( &denoiser, d_output, &p, denoiseFrameSlot, stream ) );
 	} else {
-		if ( accumulate && p.denoiseDebug == 0 && ( p.bloomStrength > 0.0f || p.lensFlareStrength > 0.0f ) ) {
+		if ( hasPostprocess ) {
 			if ( !ResizePostprocess( p.width, p.height, p.bloomRadius ) ) return false;
 			PT_CUDA_CHECK( LaunchPostprocessKernel( &postprocess, hdrBuffer, &p, stream ) );
 			hdrBuffer = postprocess.output;
 		}
+		PT_CUDA_CHECK( cudaEventRecord( timerPostprocess, stream ) );
 		LaunchToneMappingKernel( hdrBuffer, d_output, p.width, p.height, p.exposure, p.gamma, p.toneMapMode, stream );
 		PT_CUDA_CHECK( cudaGetLastError() );
 	}
@@ -717,6 +733,12 @@ bool idPathTracerBackendCUDA::Render( const ptRenderParams_t &params ) {
 	cudaEventRecord( timerStop, stream );
 	PT_CUDA_CHECK( cudaStreamSynchronize( stream ) );
 	cudaEventElapsedTime( &traceMs, timerStart, timerStop );
+	PT_CUDA_CHECK( cudaEventElapsedTime( &pathMs, timerStart, timerPath ) );
+	PT_CUDA_CHECK( cudaEventElapsedTime( &denoiseMs, timerPath, timerDenoise ) );
+	PT_CUDA_CHECK( cudaEventElapsedTime( &postprocessMs, timerDenoise, timerPostprocess ) );
+	PT_CUDA_CHECK( cudaEventElapsedTime( &toneMapMs, timerPostprocess, timerStop ) );
+	if ( !denoise ) denoiseMs = 0;
+	if ( !hasPostprocess ) postprocessMs = 0;
 	if ( denoise ) {
 		previousDenoiseParams = p;
 		denoiseHistoryValid = true;
@@ -745,6 +767,10 @@ idPathTracerBackendCUDA::GetStats
 */
 void idPathTracerBackendCUDA::GetStats( ptBackendStats_t &stats ) const {
 	stats.traceMs = traceMs;
+	stats.pathMs = pathMs;
+	stats.denoiseMs = denoiseMs;
+	stats.postprocessMs = postprocessMs;
+	stats.toneMapMs = toneMapMs;
 	stats.numVertices = numVertices;
 	stats.numTriangles = numTriangles;
 	stats.numBVHNodes = numBVHNodes;
@@ -753,7 +779,7 @@ void idPathTracerBackendCUDA::GetStats( ptBackendStats_t &stats ) const {
 	stats.numTextures = numTextures;
 	stats.deviceBytes = textureBytes
 		+ (size_t)maxWidth * maxHeight * 4 * ( sizeof( float ) + 1 )
-		+ (size_t)denoiseWidth * denoiseHeight * ( 14 * 4 * sizeof( float ) + 2 * sizeof( ptCudaDenoiseGuide_t ) )
+		+ (size_t)denoiseWidth * denoiseHeight * ( 20 * 4 * sizeof( float ) + 2 * sizeof( ptCudaDenoiseGuide_t ) )
 		+ (size_t)postWidth * postHeight * 4 * sizeof( float )
 		+ ( postScale > 0 ? (size_t)( ( postWidth + postScale - 1 ) / postScale ) *
 			( ( postHeight + postScale - 1 ) / postScale ) * 3 * 4 * sizeof( float ) : 0 )
@@ -775,6 +801,22 @@ Factory
 */
 bool PT_CUDA_IsAvailable() {
 	return idPathTracerBackendCUDA::IsAvailable();
+}
+
+bool PT_CUDA_GetDeviceInfo( ptBackendDeviceInfo_t &info ) {
+	int device = 0;
+	cudaDeviceProp props;
+	memset( &info, 0, sizeof( info ) );
+	if ( cudaGetDevice( &device ) != cudaSuccess || cudaGetDeviceProperties( &props, device ) != cudaSuccess
+		|| cudaDeviceGetPCIBusId( info.pciBusId, sizeof( info.pciBusId ), device ) != cudaSuccess
+		|| cudaDriverGetVersion( &info.driverVersion ) != cudaSuccess
+		|| cudaRuntimeGetVersion( &info.runtimeVersion ) != cudaSuccess ) return false;
+	idStr::Copynz( info.name, props.name, sizeof( info.name ) );
+	info.totalMemory = props.totalGlobalMem;
+	info.multiprocessors = props.multiProcessorCount;
+	info.computeMajor = props.major;
+	info.computeMinor = props.minor;
+	return true;
 }
 
 idPathTracerBackend *PT_CUDA_CreateBackend() {

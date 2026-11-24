@@ -56,11 +56,14 @@ __device__ inline float PT_PhysicalF0(float albedo, float metallic, float ior) {
 	return f * f * (1.0f - metallic) + albedo * metallic;
 }
 
-__device__ inline float PT_PhysicalGGX(float nh, float roughness) {
+__device__ inline float PT_PhysicalGGX(const float* n, const float* h, float roughness) {
 	const float alpha = roughness * roughness;
 	const float a2 = alpha * alpha;
-	// This form avoids cancellation at nh=1 for polished surfaces.
-	const float d = (1.0f - nh * nh) + nh * nh * a2;
+	const float nh = dot3(n, h);
+	float tangent[3];
+	cross3(n, h, tangent);
+	// Cross-product sin^2 preserves tiny angles that 1 - (n.h)^2 rounds away.
+	const float d = dot3(tangent, tangent) + nh * nh * a2;
 	return a2 / fmaxf(PT_PI * d * d, 1e-20f);
 }
 
@@ -71,7 +74,7 @@ __device__ inline void PT_EvaluatePhysicalMaterial(
 	const float nl = fmaxf(dot3(n, wi), 0.0f), nv = fmaxf(dot3(n, wo), 0.0f);
 	float h[3] = { wi[0] + wo[0], wi[1] + wo[1], wi[2] + wo[2] };
 	normalize3(h);
-	const float nh = fmaxf(dot3(n, h), 0.0f), vh = fmaxf(dot3(wo, h), 0.0f);
+	const float vh = fmaxf(dot3(wo, h), 0.0f);
 	const float alpha = roughness * roughness, a2 = alpha * alpha;
 	const float visibility = 0.5f / fmaxf(
 		nl * sqrtf(nv * nv * (1.0f - a2) + a2)
@@ -83,7 +86,7 @@ __device__ inline void PT_EvaluatePhysicalMaterial(
 		const float transmitView = (1.0f - f0) * (1.0f - powf(1.0f - nv, 5.0f));
 		const float transmitLight = (1.0f - f0) * (1.0f - powf(1.0f - nl, 5.0f));
 		const float d = transmitView * transmitLight * (1.0f - metallic) * albedo[c] / PT_PI;
-		brdf[c] = nl > 0.0f && nv > 0.0f ? d + PT_PhysicalGGX(nh, roughness) * visibility * f : 0.0f;
+		brdf[c] = nl > 0.0f && nv > 0.0f ? d + PT_PhysicalGGX(n, h, roughness) * visibility * f : 0.0f;
 		if (diffuse) diffuse[c] = nl > 0.0f && nv > 0.0f ? d : 0.0f;
 	}
 }
@@ -97,12 +100,14 @@ __device__ inline float PT_PhysicalSpecularProbability(const float* albedo, floa
 __device__ inline float PT_PhysicalBsdfPdf(
 	const float* n, const float* wo, const float* wi, float roughness, float specularProbability
 ) {
-	const float nl = dot3(n, wi);
-	if (nl <= 0.0f) return 0.0f;
+	const float nl = dot3(n, wi), nv = dot3(n, wo);
+	if (nl <= 0.0f || nv <= 0.0f) return 0.0f;
 	float h[3] = { wo[0] + wi[0], wo[1] + wi[1], wo[2] + wi[2] };
 	normalize3(h);
-	const float nh = fmaxf(dot3(n, h), 0.0f), vh = fmaxf(dot3(wo, h), 0.0f);
-	const float specularPdf = PT_PhysicalGGX(nh, roughness) * nh / fmaxf(4.0f * vh, 1e-12f);
+	const float alpha = roughness * roughness, a2 = alpha * alpha;
+	// Visible-normal reflection PDF: D(h) * G1(wo) / (4 * n.wo).
+	const float specularPdf = PT_PhysicalGGX(n, h, roughness)
+		/ (2.0f * (nv + sqrtf(nv * nv * (1.0f - a2) + a2)));
 	return (1.0f - specularProbability) * nl / PT_PI + specularProbability * specularPdf;
 }
 

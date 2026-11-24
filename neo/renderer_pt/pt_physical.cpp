@@ -58,23 +58,9 @@ static idCVar r_ptPhysicalFogRadius( "r_ptPhysicalFogRadius", "30", CVAR_RENDERE
 static idCVar r_ptPhysicalFogSteps( "r_ptPhysicalFogSteps", "16", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
 	"stratified physical single-scattering integration steps per segment", 1, 128 );
 
-static void PT_PhysicalPanel_f( const idCmdArgs &args ) {
-	using namespace D3::ImGuiHooks;
-	if ( !IsImguiEnabled() ) {
-		common->Warning( "Physical PT controls require an initialized ImGui context" );
-		return;
-	}
-	if ( GetOpenWindowsMask() & D3_ImGuiWin_PhysicalPT ) {
-		CloseWindow( D3_ImGuiWin_PhysicalPT );
-	} else {
-		OpenWindow( D3_ImGuiWin_PhysicalPT );
-	}
-}
-
 void R_PT_InitPhysical() {
 	R_PT_InitMaterialEditor();
-	cmdSystem->AddCommand( "r_ptPhysicalUI", PT_PhysicalPanel_f, CMD_FL_RENDERER, "toggle experimental physical path tracer controls" );
-	common->Printf( "PT_PHYSICAL: experimental photometric lighting and thin-lens camera enabled; r_ptPhysicalUI opens controls\n" );
+	common->Printf( "PT_PHYSICAL: experimental photometric lighting and thin-lens camera enabled; r_ptUI physical opens controls\n" );
 }
 
 void R_PT_PhysicalCamera( viewDef_t *view ) {
@@ -122,70 +108,61 @@ static void PT_PhysicalSlider( const char *label, idCVar &var, float minimum, fl
 	}
 }
 
-void R_PT_DrawPhysicalPanel() {
-	using namespace D3::ImGuiHooks;
-	bool open = true;
-	ImGui::SetNextWindowSize( ImVec2( 510, 650 ), ImGuiCond_FirstUseEver );
-	if ( ImGui::Begin( "Physical Path Tracer (experimental)", &open ) ) {
-		ImGui::PushItemWidth( ImGui::GetContentRegionAvail().x * 0.5f );
-		ImGui::TextWrapped( "PT_PHYSICAL is a build-time model. Global controls are archived CVars; material previews require explicit Save." );
-		if ( !r_ptDraw.GetBool() || r_ptMode.GetInteger() != PT_MODE_PATHTRACE ) {
-			ImGui::TextWrapped( "Select path tracing to preview these settings." );
-			if ( ImGui::Button( "Use physical path tracing" ) ) {
-				r_ptDraw.SetBool( true );
-				r_ptMode.SetInteger( PT_MODE_PATHTRACE );
-			}
+void R_PT_DrawPhysicalControls() {
+	ImGui::PushItemWidth( ImGui::GetContentRegionAvail().x * 0.5f );
+	ImGui::TextWrapped( "PT_PHYSICAL is a build-time model. Global controls are archived CVars; material previews require explicit Save." );
+	ImGui::BeginDisabled( RB_PT_IsCapturing() );
+	if ( !r_ptDraw.GetBool() || r_ptMode.GetInteger() != PT_MODE_PATHTRACE ) {
+		ImGui::TextWrapped( "Select path tracing to preview these settings." );
+		if ( ImGui::Button( "Use physical path tracing" ) ) {
+			r_ptDraw.SetBool( true );
+			r_ptMode.SetInteger( PT_MODE_PATHTRACE );
 		}
-		const bool capturing = RB_PT_IsCapturing();
-		if ( capturing ) ImGui::TextWrapped( "Capture in progress: controls locked until capture completes or r_ptAbort." );
-		ImGui::BeginDisabled( capturing );
-		R_PT_DrawMaterialEditor();
-		if ( ImGui::CollapsingHeader( "Photographic camera", ImGuiTreeNodeFlags_DefaultOpen ) ) {
-			PT_PhysicalSlider( "ISO", r_ptPhysicalISO, 25, 25600, "%.0f", true );
-			PT_PhysicalSlider( "Shutter (seconds)", r_ptPhysicalShutter, 0.000125f, 30, "%.5f s", true );
-			PT_PhysicalSlider( "Aperture", r_ptPhysicalFNumber, 1, 32, "f/%.1f", true );
-			PT_PhysicalSlider( "Compensation", r_ptPhysicalExposureCompensation, -10, 10, "%+.2f EV" );
-			PT_PhysicalSlider( "Focal length", r_ptPhysicalFocalLength, 10, 200, "%.1f mm" );
-			PT_PhysicalSlider( "Sensor width", r_ptPhysicalSensorWidth, 8, 70, "%.1f mm" );
-			bool dof = r_ptPhysicalDOF.GetBool();
-			if ( ImGui::Checkbox( "Depth of field", &dof ) ) r_ptPhysicalDOF.SetBool( dof );
-			PT_PhysicalSlider( "Focus distance", r_ptPhysicalFocusDistance, 0.25f, 1000, "%.2f m", true );
-			ImGui::Text( "EV100: %.2f   horizontal FOV: %.1f degrees",
-				PT_PhysicalEV100( r_ptPhysicalFNumber.GetFloat(), r_ptPhysicalShutter.GetFloat(), r_ptPhysicalISO.GetFloat() ),
-				PT_PhysicalFov( r_ptPhysicalSensorWidth.GetFloat(), r_ptPhysicalFocalLength.GetFloat() ) );
-			ImGui::TextWrapped( "Shutter controls exposure, not motion blur. Lens blur converges progressively; real-time temporal denoising is disabled with DOF." );
-		}
-		if ( ImGui::CollapsingHeader( "Asset calibration", ImGuiTreeNodeFlags_DefaultOpen ) ) {
-			PT_PhysicalSlider( "Light flux", r_ptPhysicalLightLumens, 1, 1000000, "%.0f lm", true );
-			PT_PhysicalSlider( "Directional illuminance", r_ptPhysicalSunLux, 1, 150000, "%.0f lux", true );
-			PT_PhysicalSlider( "Emissive luminance", r_ptPhysicalEmissionNits, 0, 100000, "%.1f cd/m^2", true );
-			PT_PhysicalSlider( "World scale", r_ptPhysicalMetersPerUnit, 0.001f, 1, "%.4f m/unit", true );
-			PT_PhysicalSlider( "Dielectric IOR", r_ptPhysicalIor, 1.01f, 2.5f, "%.2f" );
-			PT_PhysicalSlider( "Roughness scale", r_ptPhysicalRoughnessScale, 0.1f, 2, "%.2f" );
-			ImGui::TextWrapped( "Doom 3 assets are not measured PBR data. Specular maps approximate roughness, not metalness. Legacy light volumes, boosts, firefly clamps and volumetrics are not used." );
-		}
-		int toneMap = r_ptToneMapMode.GetInteger();
-		if ( ImGui::CollapsingHeader( "Atmosphere and lens effects", ImGuiTreeNodeFlags_DefaultOpen ) ) {
-			PT_PhysicalSlider( "Bloom", r_ptBloom, 0, 1, "%.3f" );
-			PT_PhysicalSlider( "Highlight threshold", r_ptBloomThreshold, 0.01f, 100, "%.2f", true );
-			PT_PhysicalSlider( "Bloom radius / height", r_ptBloomRadius, 0.001f, 0.1f, "%.3f", true );
-			PT_PhysicalSlider( "Lens ghosts", r_ptLensFlare, 0, 1, "%.3f" );
-			PT_PhysicalSlider( "Fog extinction", r_ptPhysicalFogDensity, 0, 1, "%.4f /m" );
-			PT_PhysicalSlider( "Fog scattering albedo", r_ptPhysicalFogAlbedo, 0, 1, "%.2f" );
-			PT_PhysicalSlider( "Fog anisotropy", r_ptPhysicalFogAnisotropy, -0.95f, 0.95f, "%.2f" );
-			PT_PhysicalSlider( "Fog sphere radius", r_ptPhysicalFogRadius, 0.1f, 1000, "%.1f m", true );
-			int steps = r_ptPhysicalFogSteps.GetInteger();
-			if ( ImGui::SliderInt( "Fog integration steps", &steps, 1, 128 ) ) r_ptPhysicalFogSteps.SetInteger( steps );
-			ImGui::TextWrapped( "Fog is a bounded camera-centered homogeneous volume with shadowed single scattering, not multiple scattering. Lens ghosts are an artistic screen-space approximation. Effects default off." );
-		}
-		if ( ImGui::Combo( "Tone mapping", &toneMap, "Reinhard\0ACES\0Uncharted 2\0" ) ) r_ptToneMapMode.SetInteger( toneMap );
-		bool denoise = r_ptDenoise.GetBool();
-		if ( ImGui::Checkbox( "Denoise", &denoise ) ) r_ptDenoise.SetBool( denoise );
-		ImGui::EndDisabled();
-		ImGui::PopItemWidth();
 	}
-	ImGui::End();
-	if ( !open ) CloseWindow( D3_ImGuiWin_PhysicalPT );
+	R_PT_DrawMaterialEditor();
+	if ( ImGui::CollapsingHeader( "Photographic camera", ImGuiTreeNodeFlags_DefaultOpen ) ) {
+		PT_PhysicalSlider( "ISO", r_ptPhysicalISO, 25, 25600, "%.0f", true );
+		PT_PhysicalSlider( "Shutter (seconds)", r_ptPhysicalShutter, 0.000125f, 30, "%.5f s", true );
+		PT_PhysicalSlider( "Aperture", r_ptPhysicalFNumber, 1, 32, "f/%.1f", true );
+		PT_PhysicalSlider( "Compensation", r_ptPhysicalExposureCompensation, -10, 10, "%+.2f EV" );
+		PT_PhysicalSlider( "Focal length", r_ptPhysicalFocalLength, 10, 200, "%.1f mm" );
+		PT_PhysicalSlider( "Sensor width", r_ptPhysicalSensorWidth, 8, 70, "%.1f mm" );
+		bool dof = r_ptPhysicalDOF.GetBool();
+		if ( ImGui::Checkbox( "Depth of field", &dof ) ) r_ptPhysicalDOF.SetBool( dof );
+		PT_PhysicalSlider( "Focus distance", r_ptPhysicalFocusDistance, 0.25f, 1000, "%.2f m", true );
+		ImGui::Text( "EV100: %.2f   horizontal FOV: %.1f degrees",
+			PT_PhysicalEV100( r_ptPhysicalFNumber.GetFloat(), r_ptPhysicalShutter.GetFloat(), r_ptPhysicalISO.GetFloat() ),
+			PT_PhysicalFov( r_ptPhysicalSensorWidth.GetFloat(), r_ptPhysicalFocalLength.GetFloat() ) );
+		ImGui::TextWrapped( "Shutter controls exposure, not motion blur. Lens blur converges progressively; real-time temporal denoising is disabled with DOF." );
+	}
+	if ( ImGui::CollapsingHeader( "Asset calibration", ImGuiTreeNodeFlags_DefaultOpen ) ) {
+		PT_PhysicalSlider( "Light flux", r_ptPhysicalLightLumens, 1, 1000000, "%.0f lm", true );
+		PT_PhysicalSlider( "Directional illuminance", r_ptPhysicalSunLux, 1, 150000, "%.0f lux", true );
+		PT_PhysicalSlider( "Emissive luminance", r_ptPhysicalEmissionNits, 0, 100000, "%.1f cd/m^2", true );
+		PT_PhysicalSlider( "World scale", r_ptPhysicalMetersPerUnit, 0.001f, 1, "%.4f m/unit", true );
+		PT_PhysicalSlider( "Dielectric IOR", r_ptPhysicalIor, 1.01f, 2.5f, "%.2f" );
+		PT_PhysicalSlider( "Roughness scale", r_ptPhysicalRoughnessScale, 0.1f, 2, "%.2f" );
+		ImGui::TextWrapped( "Doom 3 assets are not measured PBR data. Specular maps approximate roughness, not metalness. Legacy light volumes, boosts, firefly clamps and volumetrics are not used." );
+	}
+	int toneMap = r_ptToneMapMode.GetInteger();
+	if ( ImGui::CollapsingHeader( "Atmosphere and lens effects", ImGuiTreeNodeFlags_DefaultOpen ) ) {
+		PT_PhysicalSlider( "Bloom", r_ptBloom, 0, 1, "%.3f" );
+		PT_PhysicalSlider( "Highlight threshold", r_ptBloomThreshold, 0.01f, 100, "%.2f", true );
+		PT_PhysicalSlider( "Bloom radius / height", r_ptBloomRadius, 0.001f, 0.1f, "%.3f", true );
+		PT_PhysicalSlider( "Lens ghosts", r_ptLensFlare, 0, 1, "%.3f" );
+		PT_PhysicalSlider( "Fog extinction", r_ptPhysicalFogDensity, 0, 1, "%.4f /m" );
+		PT_PhysicalSlider( "Fog scattering albedo", r_ptPhysicalFogAlbedo, 0, 1, "%.2f" );
+		PT_PhysicalSlider( "Fog anisotropy", r_ptPhysicalFogAnisotropy, -0.95f, 0.95f, "%.2f" );
+		PT_PhysicalSlider( "Fog sphere radius", r_ptPhysicalFogRadius, 0.1f, 1000, "%.1f m", true );
+		int steps = r_ptPhysicalFogSteps.GetInteger();
+		if ( ImGui::SliderInt( "Fog integration steps", &steps, 1, 128 ) ) r_ptPhysicalFogSteps.SetInteger( steps );
+		ImGui::TextWrapped( "Fog is a bounded camera-centered homogeneous volume with shadowed single scattering, not multiple scattering. Lens ghosts are an artistic screen-space approximation. Effects default off." );
+	}
+	if ( ImGui::Combo( "Tone mapping", &toneMap, "Reinhard\0ACES\0Uncharted 2\0" ) ) r_ptToneMapMode.SetInteger( toneMap );
+	bool denoise = r_ptDenoise.GetBool();
+	if ( ImGui::Checkbox( "Denoise", &denoise ) ) r_ptDenoise.SetBool( denoise );
+	ImGui::EndDisabled();
+	ImGui::PopItemWidth();
 }
 
 #endif

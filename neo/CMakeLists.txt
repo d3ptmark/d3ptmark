@@ -92,7 +92,7 @@ if(CUDA_PATHTRACER)
 		set(HAVE_CUDA ON)
 		message(STATUS "CUDA path tracer enabled - compiler: ${CMAKE_CUDA_COMPILER}")
 	else()
-		message(WARNING "CUDA_PATHTRACER requested but no CUDA compiler found")
+		message(FATAL_ERROR "CUDA_PATHTRACER requested but no CUDA compiler found")
 	endif()
 endif()
 
@@ -670,6 +670,8 @@ set(src_renderer
 	renderer/tr_polytope.cpp
 	renderer/tr_render.cpp
 	renderer/tr_render_gl_stats.cpp
+	renderer_pt/pt_benchmark.cpp
+	renderer_pt/pt_capture_report.cpp
 	renderer/tr_rendertools.cpp
 	renderer/tr_shadowbounds.cpp
 	renderer/tr_stencilshadow.cpp
@@ -702,8 +704,8 @@ if(HAVE_CUDA)
 
 	list(APPEND src_renderer
 		renderer_pt/pt_render.cpp
+		renderer_pt/pt_ui.cpp
 		renderer_pt/pt_commands.cpp
-		renderer_pt/pt_benchmark.cpp
 		renderer_pt/pt_scene.cpp
 		renderer_pt/pt_scene_material.cpp
 		renderer_pt/cuda/pt_backend_cuda.cpp
@@ -1330,10 +1332,24 @@ include_directories(${CMAKE_BINARY_DIR})
 include_directories(${CMAKE_SOURCE_DIR})
 
 add_library(idlib STATIC ${src_idlib})
+enable_testing()
+execute_process(COMMAND git rev-parse --short=12 HEAD WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+	OUTPUT_VARIABLE PT_CAPTURE_REVISION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT PT_CAPTURE_REVISION)
+	set(PT_CAPTURE_REVISION "unknown")
+else()
+	execute_process(COMMAND git diff --quiet HEAD WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+		RESULT_VARIABLE PT_CAPTURE_DIRTY ERROR_QUIET)
+	if(PT_CAPTURE_DIRTY)
+		string(APPEND PT_CAPTURE_REVISION "-dirty")
+	endif()
+endif()
+add_executable(pt_capture_report_test renderer_pt/tests/pt_capture_report_test.cpp)
+add_test(pt_capture_report pt_capture_report_test)
+add_executable(pt_benchmark_test renderer_pt/tests/pt_benchmark_test.cpp)
+add_test(pt_benchmark pt_benchmark_test)
 if(HAVE_CUDA)
-	enable_testing()
-	add_executable(pt_benchmark_test renderer_pt/tests/pt_benchmark_test.cpp)
-	add_test(pt_benchmark pt_benchmark_test)
+	find_path(PT_NVML_INCLUDE_DIR nvml.h HINTS ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES} /usr/local/cuda/include)
 endif()
 if(PT_MATERIAL_CACHE_TESTS)
 	enable_testing()
@@ -1435,6 +1451,13 @@ else()
 	set_target_properties(${DHEWM3BINARY} PROPERTIES COMPILE_DEFINITIONS "__DOOM_DLL__;${TOOLS_DEFINES}")
 endif()
 	set_target_properties(${DHEWM3BINARY} PROPERTIES LINK_FLAGS "${ldflags}")
+	target_compile_definitions(${DHEWM3BINARY} PRIVATE PT_CAPTURE_REVISION="${PT_CAPTURE_REVISION}")
+	if(HAVE_CUDA)
+		if(PT_NVML_INCLUDE_DIR)
+			target_include_directories(${DHEWM3BINARY} PRIVATE ${PT_NVML_INCLUDE_DIR})
+			target_compile_definitions(${DHEWM3BINARY} PRIVATE HAVE_NVML_CAPTURE)
+		endif()
+	endif()
 	set_target_properties(${DHEWM3BINARY} PROPERTIES MACOSX_BUNDLE_INFO_PLIST ${PROJECT_SOURCE_DIR}/sys/osx/Info.plist)
 
 	target_link_libraries(${DHEWM3BINARY}

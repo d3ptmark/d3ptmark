@@ -18,8 +18,7 @@ __device__ inline float PT_ModulationFactor(float linearSource, int blendMode) {
 	return PT_SrgbToLinear(fmaxf(0.0f, 1.0f - source));
 }
 
-__device__ __forceinline__ void PT_ApplyTexTransform(const ptMaterial_t& material, float& tu, float& tv) {
-	const float* xf = material.texTransform;
+__device__ __forceinline__ void PT_ApplyTexTransform(const float* xf, float& tu, float& tv) {
 	if (xf[0] == 1.0f && xf[1] == 0.0f && xf[2] == 0.0f
 		&& xf[3] == 0.0f && xf[4] == 1.0f && xf[5] == 0.0f) {
 		return;
@@ -30,19 +29,30 @@ __device__ __forceinline__ void PT_ApplyTexTransform(const ptMaterial_t& materia
 	tv = v - floorf(v);
 }
 
+__device__ __forceinline__ void PT_ApplyTexTransform(const ptMaterial_t& material, float& tu, float& tv) {
+	PT_ApplyTexTransform(material.texTransform, tu, tv);
+}
+
 __device__ __forceinline__ void PT_ApplyVertexColor(
-	const ptMaterial_t& material, const ptVertex_t* vertices, const ptTriangle_t& tri,
+	int mode, const ptVertex_t* vertices, const ptTriangle_t& tri,
 	float w, float u, float v, float* color
 ) {
-	if (!material.useVertexColor) return;
+	if (!mode) return;
 	const ptVertex_t& v0 = vertices[tri.vertexIndices[0]];
 	const ptVertex_t& v1 = vertices[tri.vertexIndices[1]];
 	const ptVertex_t& v2 = vertices[tri.vertexIndices[2]];
 	for (int c = 0; c < 4; c++) {
 		float vertexColor = w * v0.color[c] + u * v1.color[c] + v * v2.color[c];
-		if (material.useVertexColor == 2) vertexColor = 1.0f - vertexColor;
+		if (mode == 2) vertexColor = 1.0f - vertexColor;
 		color[c] *= c < 3 ? PT_SrgbToLinear(vertexColor) : vertexColor;
 	}
+}
+
+__device__ __forceinline__ void PT_ApplyVertexColor(
+	const ptMaterial_t& material, const ptVertex_t* vertices, const ptTriangle_t& tri,
+	float w, float u, float v, float* color
+) {
+	PT_ApplyVertexColor(material.useVertexColor, vertices, tri, w, u, v, color);
 }
 
 __device__ inline bool PT_IsLitDecal(const ptMaterial_t& material) {
@@ -104,6 +114,47 @@ __device__ inline void SampleTextureSrgb(const cudaTexture_t* textures, int texI
 	color[0] = PT_SrgbToLinear(color[0]);
 	color[1] = PT_SrgbToLinear(color[1]);
 	color[2] = PT_SrgbToLinear(color[2]);
+}
+
+__device__ inline void PT_SampleEmission(
+	const ptMaterial_t& material, const cudaTexture_t* textures,
+	const ptVertex_t* vertices, const ptTriangle_t& tri, float w, float u, float v,
+	float tu, float tv, float* emission
+) {
+	if (material.emission[0] == 0.0f && material.emission[1] == 0.0f && material.emission[2] == 0.0f) {
+		emission[0] = emission[1] = emission[2] = 0.0f;
+		return;
+	}
+	float glow[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+	if (material.emissionTexture >= 0 && textures) {
+		PT_ApplyTexTransform(material.emissionTransform, tu, tv);
+		SampleTextureSrgb(textures, material.emissionTexture, tu, tv, glow);
+	}
+	glow[3] *= material.emissionAlpha;
+	PT_ApplyVertexColor(material.emissionVertexColor, vertices, tri, w, u, v, glow);
+	const float alpha = material.emissionUsesAlpha ? clamp(glow[3], 0.0f, 1.0f) : 1.0f;
+	for (int c = 0; c < 3; c++) emission[c] = material.emission[c] * glow[c] * alpha;
+}
+
+__device__ inline float PT_AdditiveMaskAlpha(
+	const ptMaterial_t& material, const cudaTexture_t* textures,
+	const ptVertex_t* vertices, const ptTriangle_t& tri, float w, float u, float v,
+	float tu, float tv
+) {
+	const int index = material.additiveMaskTexture;
+	if (!textures || index < 0 || index >= MAX_TEXTURES || !textures[index].data
+		|| textures[index].width <= 0 || textures[index].height <= 0) return 0.0f;
+	PT_ApplyTexTransform(material.additiveMaskTransform, tu, tv);
+	float mask[4];
+	SampleTexture(textures, index, tu, tv, mask);
+	float alpha = mask[3] * material.additiveMaskAlpha;
+	if (material.additiveMaskVertexColor) {
+		float vertexAlpha = w * vertices[tri.vertexIndices[0]].color[3]
+			+ u * vertices[tri.vertexIndices[1]].color[3] + v * vertices[tri.vertexIndices[2]].color[3];
+		if (material.additiveMaskVertexColor == 2) vertexAlpha = 1.0f - vertexAlpha;
+		alpha *= vertexAlpha;
+	}
+	return clamp(alpha, 0.0f, 1.0f);
 }
 
 __device__ inline void SampleLightTextureSrgb(const cudaTexture_t* textures, int texIndex,

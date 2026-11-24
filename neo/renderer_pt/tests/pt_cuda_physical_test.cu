@@ -109,6 +109,144 @@ __global__ void IntegrateBsdf(float* results, int count, float roughness, float 
 	results[index * 4 + 3] = fabsf(brdf[0] - reciprocal[0]) / fmaxf(1.0f, brdf[0]);
 }
 
+__global__ void CompareBsdfSampling(
+	float* results, int count, float roughness, float metallic, float viewCosine, int orientation
+) {
+	const int index = blockIdx.x * blockDim.x + threadIdx.x;
+	if (index >= count) return;
+	const float normal[3] = { orientation == 0 ? 0.0f : orientation == 1 ? 0.8f : 1.0f,
+		0.0f, orientation == 0 ? 1.0f : orientation == 1 ? 0.6f : 0.0f };
+	const float tangent[3] = { normal[2], 0.0f, -normal[0] };
+	const float sine = sqrtf(1.0f - viewCosine * viewCosine);
+	const float wo[3] = { sine * tangent[0] + viewCosine * normal[0], 0.0f,
+		sine * tangent[2] + viewCosine * normal[2] };
+	const float albedo[3] = { 1.0f, 0.5f, 0.1f };
+	const float probability = PT_PhysicalSpecularProbability(albedo, metallic, 1.5f);
+	ptRng_t rng;
+	PT_RngInit(&rng, index, 37);
+	float wi[3], pdf, brdf[3];
+	PT_SamplePhysicalBsdf(normal, wo, albedo, metallic, roughness, 1.5f, &rng, wi, pdf);
+	PT_EvaluatePhysicalMaterial(albedo, normal, wo, wi, metallic, roughness, 1.5f, brdf, NULL);
+	results[index * 4] = pdf > 0 ? brdf[0] * fmaxf(dot3(normal, wi), 0.0f) / pdf : 0;
+	results[index * 4 + 3] = pdf > 0 ? fabsf(dot3(wi, wi) - 1.0f) : 0;
+
+	// Keep the previous NDF sampler and its PDF as an independent statistical reference.
+	PT_RngInit(&rng, index, 37);
+	const float n[3] = { 0, 0, 1 };
+	const float v[3] = { sine, 0, viewCosine };
+	if (PT_Rand(&rng) >= probability) {
+		SampleHemisphere(n, &rng, wi, pdf);
+	} else {
+		const float r = PT_Rand(&rng);
+		const float phi = 2 * PT_PI * PT_Rand(&rng);
+		const float alpha = roughness * roughness;
+		const float cosine = sqrtf((1 - r) / (1 + (alpha * alpha - 1) * r));
+		const float sinTheta = sqrtf(fmaxf(0.0f, 1 - cosine * cosine));
+		const float h[3] = { sinTheta * cosf(phi), sinTheta * sinf(phi), cosine };
+		const float vh = dot3(v, h);
+		for (int c = 0; c < 3; c++) wi[c] = 2 * vh * h[c] - v[c];
+		if (vh <= 0) wi[2] = -1;
+		normalize3(wi);
+	}
+	pdf = 0;
+	if (wi[2] > 0) {
+		float h[3] = { v[0] + wi[0], wi[1], v[2] + wi[2] };
+		normalize3(h);
+		const float alpha = roughness * roughness, a2 = alpha * alpha;
+		const float denominator = h[0] * h[0] + h[1] * h[1] + a2 * h[2] * h[2];
+		const float distribution = a2 / (PT_PI * denominator * denominator);
+		const float specularPdf = distribution * h[2] / (4 * dot3(v, h));
+		pdf = (1 - probability) * wi[2] / PT_PI + probability * specularPdf;
+	}
+	PT_EvaluatePhysicalMaterial(albedo, n, v, wi, metallic, roughness, 1.5f, brdf, NULL);
+	results[index * 4 + 1] = pdf > 0 ? brdf[0] * fmaxf(wi[2], 0.0f) / pdf : 0;
+
+	const float worldWi[3] = { wi[0] * tangent[0] + wi[2] * normal[0], wi[1],
+		wi[0] * tangent[2] + wi[2] * normal[2] };
+	results[index * 4 + 2] = pdf > 0
+		? PT_PhysicalBsdfPdf(normal, wo, worldWi, roughness, probability) / pdf : 0;
+}
+
+__global__ void CheckBsdfBoundary(float* results) {
+	const float n[3] = { 0, 0, 1 }, tangent[3] = { 1, 0, 0 }, back[3] = { 0, 0, -1 };
+	const float albedo[3] = { 1, 1, 1 };
+	results[0] = PT_PhysicalBsdfPdf(n, tangent, n, 0.6f, 0.5f);
+	results[1] = PT_PhysicalBsdfPdf(n, back, n, 0.6f, 0.5f);
+	results[2] = PT_PhysicalBsdfPdf(n, n, back, 0.6f, 0.5f);
+	ptRng_t rng;
+	PT_RngInit(&rng, 0, 0);
+	const unsigned int state = rng.state;
+	float direction[3], pdf;
+	PT_SamplePhysicalBsdf(n, tangent, albedo, 1, 0.6f, 1.5f, &rng, direction, pdf);
+	results[3] = pdf;
+	results[4] = dot3(direction, direction);
+	PT_SamplePhysicalBsdf(n, back, albedo, 1, 0.6f, 1.5f, &rng, direction, pdf);
+	results[5] = pdf;
+	results[6] = dot3(direction, direction);
+	results[7] = rng.state == state;
+}
+
+static void CheckVisibleNormalSampling(float* device, std::vector<float>& results) {
+	const int count = 512 * 512;
+	CheckBsdfBoundary<<<1, 1>>>(device);
+	CUDA_CHECK(cudaGetLastError());
+	CUDA_CHECK(cudaMemcpy(results.data(), device, 8 * sizeof(float), cudaMemcpyDeviceToHost));
+	for (int i = 0; i < 7; i++) CheckNear("nonpositive view/light hemisphere has no BSDF samples", results[i], 0, 0);
+	CheckNear("rejected view preserves RNG", results[7], 1, 0);
+	for (float roughness : { 0.04f, 0.2f, 0.6f, 1.0f }) {
+		for (float metallic : { 0.0f, 1.0f }) {
+			for (float cosine : { 1.0f, 0.2f, 0.05f }) {
+				for (int orientation : { 0, 1, 2 }) {
+					CompareBsdfSampling<<<count / 256, 256>>>(device, count, roughness, metallic, cosine, orientation);
+					CUDA_CHECK(cudaGetLastError());
+					CUDA_CHECK(cudaMemcpy(results.data(), device, count * 4 * sizeof(float), cudaMemcpyDeviceToHost));
+					double mean = 0, reference = 0, moment = 0, referenceMoment = 0, mass = 0;
+					double maximum = 0;
+					int accepted = 0, referenceAccepted = 0;
+					for (int i = 0; i < count; i++) {
+						const double value = results[i * 4], oldValue = results[i * 4 + 1];
+						if (!std::isfinite(value) || value < 0 || !std::isfinite(oldValue) || oldValue < 0) {
+							std::fprintf(stderr, "Invalid specular sampling weight\n");
+							std::exit(1);
+						}
+						mean += value / count;
+						reference += oldValue / count;
+						moment += value * value / count;
+						referenceMoment += oldValue * oldValue / count;
+						mass += results[i * 4 + 2] / count;
+						maximum = std::fmax(maximum, value);
+						accepted += value > 0;
+						referenceAccepted += oldValue > 0;
+						CheckNear("BSDF sampled direction is normalized", results[i * 4 + 3], 0, 2e-6);
+					}
+					const double variance = std::fmax(0.0, moment - mean * mean);
+					const double oldVariance = std::fmax(0.0, referenceMoment - reference * reference);
+					const double standardError = std::sqrt((variance + oldVariance) / count);
+					std::printf("BSDF sampling r=%.2f m=%.0f nv=%.2f orientation=%d: mean %.6f / %.6f, "
+						"variance %.6f / %.6f, accepted %.4f / %.4f, max %.5f\n",
+						roughness, metallic, cosine, orientation, mean, reference, variance, oldVariance,
+						(double)accepted / count, (double)referenceAccepted / count, maximum);
+					CheckNear("BSDF sampler preserves reflected energy", mean, reference, 6 * standardError + 0.001);
+					CheckNear("BSDF PDF mass matches sampling acceptance", (double)accepted / count, mass, 0.006);
+					if (metallic == 1) {
+						CheckNear("visible-normal conductor weight is bounded",
+							std::fmax(0.0, maximum - 1.0 / 0.95), 0, 0.0002);
+						if (roughness >= 0.2f && cosine < 1.0f && variance >= 0.6 * oldVariance) {
+							std::fprintf(stderr, "Grazing conductor variance did not improve by at least 40%%\n");
+							std::exit(1);
+						}
+						if (roughness == 0.6f && cosine == 0.05f
+							&& (variance >= 0.1 * oldVariance || (double)accepted / count < 0.95)) {
+							std::fprintf(stderr, "Rough grazing conductor sampling regressed\n");
+							std::exit(1);
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 __global__ void CheckDirect(float* results) {
 	ptVertex_t vertices[3] = {};
 	vertices[0].position[0] = vertices[0].position[1] = -1000.0f;
@@ -601,6 +739,7 @@ int main() {
 		meanRadiusSquared += results[i * 4 + 2] / count;
 	}
 	CheckNear("uniform aperture area", meanRadiusSquared, p.physicalApertureRadius * p.physicalApertureRadius * 0.5, 0.001);
+	CheckVisibleNormalSampling(device, results);
 	for (float roughness : { 0.04f, 0.2f, 0.6f, 1.0f }) {
 		for (float metallic : { 0.0f, 1.0f }) {
 			for (float cosine : { 1.0f, 0.2f }) {

@@ -1,5 +1,8 @@
 #include "sys/platform.h"
 #include "framework/Console.h"
+#include "framework/Session.h"
+#include "renderer_pt/pt_benchmark.h"
+#include "renderer_pt/pt_render.h"
 #include "renderer/tr_local.h"
 
 /*
@@ -27,12 +30,22 @@ static int glSeq_startTime = 0;
 static int glSeq_saved_fixedTic = 0;
 static bool glSeq_saved_stopTime = false;
 
+bool R_GLSequenceActive() { return glSeq_state != GL_SEQ_IDLE; }
+
 /*
 ========================
 R_GLSequence_f
 ========================
 */
 void R_GLSequence_f( const idCmdArgs &args ) {
+	if ( R_BenchmarkActive()
+#ifdef HAVE_PATHTRACER
+		|| RB_PT_IsCapturing()
+#endif
+		) {
+		common->Warning( "A renderer capture/benchmark is active; abort it before starting r_glSequence" );
+		return;
+	}
 	if (glSeq_state != GL_SEQ_IDLE) {
 		common->Printf("R_GLSequence_f(): Sequence render already in progress. Use r_glAbort to cancel.\n");
 		return;
@@ -76,6 +89,12 @@ R_GLAbort_f
 ========================
 */
 void R_GLAbort_f( const idCmdArgs &args ) {
+	if ( R_GL_BenchmarkActive() ) {
+		R_EndBenchmark( false );
+		session->Stop();
+		session->StartMenu();
+		return;
+	}
 	if (glSeq_state == GL_SEQ_IDLE) {
 		common->Printf("R_GLAbort_f(): Nothing in progress to abort.\n");
 		return;

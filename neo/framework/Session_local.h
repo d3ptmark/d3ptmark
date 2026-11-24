@@ -300,9 +300,7 @@ public:
 	void				StartRecordingRenderDemo( const char *name );
 	void				StopRecordingRenderDemo();
 	void				StartPlayingRenderDemo( idStr name );
-#ifdef HAVE_PATHTRACER
-	bool				StartPTBenchmarkDemo( const char *name ) override;
-#endif
+	bool				StartBenchmarkDemo( const char *name ) override;
 	void				StopPlayingRenderDemo();
 	void				CompressDemoFile( const char *scheme, const char *name );
 	void				TimeRenderDemo( const char *name, bool twice = false );

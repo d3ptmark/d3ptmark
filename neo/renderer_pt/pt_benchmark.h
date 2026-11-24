@@ -24,6 +24,10 @@ inline int PT_BenchmarkBatchSize( int samples, int presetBatch ) {
 	return batch;
 }
 
+inline bool PT_BenchmarkCanAdvance( bool imageSaved, double frameMilliseconds ) {
+	return imageSaved && frameMilliseconds >= 1000.0 / 30.0;
+}
+
 struct ptBenchmarkStatistics_t {
 	std::vector<double> frameMilliseconds;
 	double gpuMilliseconds = 0;
@@ -68,18 +72,23 @@ inline const char *PT_BenchmarkImageExtension( int format ) {
 	}
 }
 
-#ifdef HAVE_PATHTRACER
 class idCmdArgs;
+void R_GL_Benchmark_f( const idCmdArgs &args );
+bool R_GL_BenchmarkActive();
+bool R_BenchmarkActive();
+bool R_BenchmarkAdvance();
+void R_BenchmarkNewFrame();
+void R_BenchmarkScreenBegin();
+void R_BenchmarkCaptureGL();
+void R_BenchmarkScreenComplete();
+void R_EndBenchmark( bool completed );
+
+#ifdef HAVE_PATHTRACER
 void R_PT_Benchmark_f( const idCmdArgs &args );
 bool R_PT_BenchmarkActive();
-bool R_PT_BenchmarkAdvance();
-void R_PT_BenchmarkNewFrame();
 int R_PT_BenchmarkTargetFrames();
 int R_PT_BenchmarkBatch();
 void R_PT_BenchmarkRendered( int accumulatedFrames, float gpuMilliseconds, int width, int height );
-void R_PT_BenchmarkScreenBegin();
-void R_PT_BenchmarkScreenComplete();
-void R_PT_EndBenchmark( bool completed );
 #endif
 
 #endif

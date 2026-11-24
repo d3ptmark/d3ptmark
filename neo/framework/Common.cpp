@@ -883,9 +883,17 @@ idCmdArgs	com_consoleLines[MAX_CONSOLE_LINES];
 idCommonLocal::ParseCommandLine
 ==================
 */
+static idStrList com_startupArguments;
+
+const idStrList &Com_GetStartupArguments() {
+	return com_startupArguments;
+}
+
 void idCommonLocal::ParseCommandLine( int argc, char **argv ) {
 	int i;
 
+	com_startupArguments.Clear();
+	for ( i = 0; i < argc; i++ ) com_startupArguments.Append( argv[i] );
 	com_numConsoleLines = 0;
 	// API says no program path
 	for ( i = 0; i < argc; i++ ) {

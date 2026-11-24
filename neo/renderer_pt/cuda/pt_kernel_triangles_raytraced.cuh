@@ -216,6 +216,8 @@ __global__ void TriangleDrawRayTracedKernel(
 		// interpolate texcoord
 		float tu = w0 * vertices[i0].texcoord[0] + w1 * vertices[i1].texcoord[0] + w2 * vertices[i2].texcoord[0];
 		float tv = w0 * vertices[i0].texcoord[1] + w1 * vertices[i1].texcoord[1] + w2 * vertices[i2].texcoord[1];
+		const float rawTu = tu;
+		const float rawTv = tv;
 
 		// hit position
 		float pX = rayOrigX + rayDirX * hitT;
@@ -229,7 +231,8 @@ __global__ void TriangleDrawRayTracedKernel(
 		float albB = mat.albedo[2];
 		float alpha = 1.0f;
 
-		if (mat.blendMode == PT_BLEND_MODULATE_INVERSE) PT_ApplyTexTransform(mat, tu, tv);
+		const bool maskedAdditive = mat.additiveUsesAlpha == PT_ADDITIVE_LOCAL_MASK;
+		if (mat.blendMode == PT_BLEND_MODULATE_INVERSE || maskedAdditive) PT_ApplyTexTransform(mat, tu, tv);
 		if (mat.albedoTexture >= 0) {
 			float texColor[4];
 			if (mat.blendMode == PT_BLEND_MODULATE_INVERSE) {
@@ -241,6 +244,14 @@ __global__ void TriangleDrawRayTracedKernel(
 			albG *= texColor[1];
 			albB *= texColor[2];
 			alpha = texColor[3];
+		}
+		if (maskedAdditive) {
+			float color[4] = { albR, albG, albB, alpha };
+			PT_ApplyVertexColor(mat, vertices, tri, w0, w1, w2, color);
+			albR = color[0];
+			albG = color[1];
+			albB = color[2];
+			alpha = PT_AdditiveMaskAlpha(mat, textures, vertices, tri, w0, w1, w2, rawTu, rawTv);
 		}
 		if (mat.blendMode == PT_BLEND_MODULATE_INVERSE) {
 			float color[4] = { albR, albG, albB, alpha };
@@ -377,9 +388,11 @@ __global__ void TriangleDrawRayTracedKernel(
 		}
 
 		// emission contribution
-		float emitR = mat.emission[0] * emissionBoost;
-		float emitG = mat.emission[1] * emissionBoost;
-		float emitB = mat.emission[2] * emissionBoost;
+		float emission[3];
+		PT_SampleEmission(mat, textures, vertices, tri, w0, w1, w2, rawTu, rawTv, emission);
+		float emitR = emission[0] * emissionBoost;
+		float emitG = emission[1] * emissionBoost;
+		float emitB = emission[2] * emissionBoost;
 		float emitLum = emitR * 0.2126f + emitG * 0.7152f + emitB * 0.0722f;
 		if (emitLum > 0.001f) {
 			colorR += throughR * emitR;

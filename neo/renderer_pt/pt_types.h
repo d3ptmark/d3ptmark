@@ -53,6 +53,12 @@ enum ptBlendMode_t {
 	PT_BLEND_MODULATE_INVERSE = 4	// dst * (1 - src), used by Doom 3 blood decals
 };
 
+enum ptAdditiveAlpha_t {
+	PT_ADDITIVE_ONE = 0,
+	PT_ADDITIVE_SOURCE_ALPHA = 1,
+	PT_ADDITIVE_LOCAL_MASK = 2	// DST_ALPHA from a preceding alpha-only overwrite
+};
+
 enum ptRenderMode_t {
 	PT_MODE_PATHTRACE		= 0,
 	PT_MODE_BVH_DEBUG		= 1,
@@ -118,11 +124,19 @@ typedef struct {
 	int isAmbientOnly;			// no interaction stages, rendered as unlit overlay
 	int noShadows;				// does not cast shadows
 	int decalOverlay;			// authored lit overlay, not inferred from noShadows alone
-	int additiveUsesAlpha;		// SRC_ALPHA + ONE, unlike ONE + ONE
+	int additiveUsesAlpha;		// ptAdditiveAlpha_t
+	int additiveMaskTexture;
+	int additiveMaskVertexColor;
+	float additiveMaskAlpha;
+	float additiveMaskTransform[6];
 	int albedoTexture;			// texture index or -1
 	int normalTexture;
 	int specularTexture;
 	int emissionTexture;		// glow stage texture or -1
+	int emissionVertexColor;
+	int emissionUsesAlpha;		// SRC_ALPHA, ONE glow stages
+	float emissionAlpha;
+	float emissionTransform[6];
 	float bumpScale;
 	float texTransform[6];		// affine transform: u'=x0*u+x1*v+x2, v'=x3*u+x4*v+x5
 	float polygonOffset;		// depth bias for decals

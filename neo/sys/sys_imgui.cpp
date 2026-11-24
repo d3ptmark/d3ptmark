@@ -40,8 +40,8 @@
 #include "renderer/tr_local.h" // glconfig
 #include "ui/DeviceContext.h"
 #include "ui/UserInterface.h"
-#ifdef PT_PHYSICAL
-#include "renderer_pt/pt_physical.h"
+#ifdef HAVE_PATHTRACER
+#include "renderer_pt/pt_ui.h"
 #endif
 
 extern void Com_DrawDhewm3SettingsMenu(); // in framework/dhewm3SettingsMenu.cpp
@@ -369,9 +369,9 @@ void NewFrame()
 	if (openImguiWindows & D3_ImGuiWin_Settings) {
 		Com_DrawDhewm3SettingsMenu();
 	}
-#ifdef PT_PHYSICAL
-	if (openImguiWindows & D3_ImGuiWin_PhysicalPT) {
-		R_PT_DrawPhysicalPanel();
+#ifdef HAVE_PATHTRACER
+	if (openImguiWindows & D3_ImGuiWin_PathTracer) {
+		R_PT_DrawUI();
 	}
 #endif
 

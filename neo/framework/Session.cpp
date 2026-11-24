@@ -36,8 +36,9 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/ModelManager.h"
 
 #include "framework/Session_local.h"
-#ifdef HAVE_PATHTRACER
 #include "renderer_pt/pt_benchmark.h"
+#ifdef HAVE_PATHTRACER
+#include "renderer_pt/pt_render.h"
 #endif
 
 #if defined(__AROS__)
@@ -410,6 +411,9 @@ called on errors and game exits
 ===============
 */
 void idSessionLocal::Stop() {
+#ifdef HAVE_PATHTRACER
+	RB_PT_CancelCaptures();
+#endif
 	ClearWipe();
 
 	// clear mapSpawned and demo playing flags
@@ -867,9 +871,7 @@ Reports timeDemo numbers and finishes any avi recording
 ================
 */
 void idSessionLocal::StopPlayingRenderDemo() {
-#ifdef HAVE_PATHTRACER
-	R_PT_EndBenchmark( false );
-#endif
+	R_EndBenchmark( false );
 	if ( !readDemo ) {
 		timeDemo = TD_NO;
 		return;
@@ -980,12 +982,10 @@ void idSessionLocal::StartPlayingRenderDemo( idStr demoName ) {
 	timeDemoStartTime = Sys_Milliseconds();
 }
 
-#ifdef HAVE_PATHTRACER
-bool idSessionLocal::StartPTBenchmarkDemo( const char *name ) {
+bool idSessionLocal::StartBenchmarkDemo( const char *name ) {
 	StartPlayingRenderDemo( name );
 	return readDemo != NULL;
 }
-#endif
 
 /*
 ================
@@ -2403,14 +2403,12 @@ void idSessionLocal::AdvanceRenderDemo( bool singleFrameOnly ) {
 
 		readDemo->ReadInt( ds );
 		if ( ds == DS_FINISHED ) {
-#ifdef HAVE_PATHTRACER
-			if ( R_PT_BenchmarkActive() ) {
-				R_PT_EndBenchmark( true );
+			if ( R_BenchmarkActive() ) {
+				R_EndBenchmark( true );
 				Stop();
 				StartMenu();
 				break;
 			}
-#endif
 			if ( numDemoFrames != 1 ) {
 				// if the demo has a single frame (a demoShot), continuously replay
 				// the renderView that has already been read
@@ -2635,10 +2633,8 @@ void idSessionLocal::UpdateScreen( bool outOfSequence ) {
 	}
 
 	insideUpdateScreen = true;
-#ifdef HAVE_PATHTRACER
-	const bool benchmarkScreen = !outOfSequence && R_PT_BenchmarkActive();
-	if ( benchmarkScreen ) R_PT_BenchmarkScreenBegin();
-#endif
+	const bool benchmarkScreen = !outOfSequence && R_BenchmarkActive();
+	if ( benchmarkScreen ) R_BenchmarkScreenBegin();
 
 	// if this is a long-operation update and we are in windowed mode,
 	// release the mouse capture back to the desktop
@@ -2651,7 +2647,12 @@ void idSessionLocal::UpdateScreen( bool outOfSequence ) {
 	D3P_EndCPUSample(Render_BeginFrame);
 
 	// draw everything
-	Draw();
+	if ( benchmarkScreen && R_GL_BenchmarkActive() ) {
+		rw->RenderScene( &currentDemoRenderView );
+		R_BenchmarkCaptureGL();
+	} else {
+		Draw();
+	}
 
 	D3P_BeginCPUSample(Render_EndFrame);
 	if ( com_speeds.GetBool() ) {
@@ -2660,13 +2661,11 @@ void idSessionLocal::UpdateScreen( bool outOfSequence ) {
 		renderSystem->EndFrame( NULL, NULL );
 	}
 	D3P_EndCPUSample(Render_EndFrame);
-#ifdef HAVE_PATHTRACER
-	if ( !outOfSequence ) R_PT_BenchmarkScreenComplete();
-	if ( benchmarkScreen && !R_PT_BenchmarkActive() && readDemo ) {
+	if ( !outOfSequence ) R_BenchmarkScreenComplete();
+	if ( benchmarkScreen && !R_BenchmarkActive() && readDemo ) {
 		Stop();
 		StartMenu();
 	}
-#endif
 
 	insideUpdateScreen = false;
 }
@@ -2744,11 +2743,9 @@ void idSessionLocal::Frame() {
 	}
 
 	if ( readDemo ) {
-#ifdef HAVE_PATHTRACER
-		if ( R_PT_BenchmarkActive() ) {
+		if ( R_BenchmarkActive() ) {
 			minTic = latchedTicNumber;
 		} else
-#endif
 		if ( !timeDemo && numDemoFrames != 1 ) {
 			minTic = lastDemoTic + USERCMD_PER_DEMO_FRAME;
 		} else {
@@ -2803,15 +2800,13 @@ void idSessionLocal::Frame() {
 
 	// advance demos
 	if ( readDemo ) {
-#ifdef HAVE_PATHTRACER
-		if ( R_PT_BenchmarkActive() ) {
-			if ( R_PT_BenchmarkAdvance() ) {
-				R_PT_BenchmarkNewFrame();
+		if ( R_BenchmarkActive() ) {
+			if ( R_BenchmarkAdvance() ) {
+				R_BenchmarkNewFrame();
 				AdvanceRenderDemo( true );
 			}
 			return;
 		}
-#endif
 		AdvanceRenderDemo( false );
 		return;
 	}

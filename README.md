@@ -132,19 +132,25 @@ and visibility changes from repeatedly discarding valid static-world history. Ch
 exposure or gamma, or toggling denoising, does not alter the raw accumulation.
 
 This stage has no object motion vectors: non-world/deforming surfaces and view weapons
-receive spatial filtering only, never temporal reuse. Sky, transparent, ambient-only,
-no-shadow overlays, and mixed-primary-surface pixels bypass denoising. Opaque glossy,
+receive spatial filtering only, never temporal reuse. Transparent, ambient-only,
+no-shadow overlays, and geometrically mixed pixels bypass surface denoising. Opaque glossy,
 metallic, and emissive surfaces now participate; primary emission itself is not filtered.
 Adaptive gradient sampling, object motion vectors, transmission denoising,
 and TAA remain future work; low-sample silhouettes can still shimmer, sharp reflections
-can remain noisy, and moving objects are spatial-only. Bypassed pixels display the raw
-progressive mean, including their fog; volume filtering currently shares the primary
-surface depth/coverage guide and does not invent a guide through glass or mixed silhouettes.
-Offline captures additionally filter volume on sky/miss rays without filtering the sky
-itself; real-time misses retain the full raw progressive result.
+can remain noisy, and moving objects are spatial-only. In offline captures, compatible
+opaque material mixtures retain averaged reflectance guides and spatial filtering
+without temporal reprojection; true depth/normal discontinuities still use raw surface
+lighting. Gameplay retains the conservative mixed-material progressive fallback.
+Offline captures filter volume independently using the averaged first-visible-layer
+depth, including transparent/overlay/mixed pixels and sky/miss rays. The filter respects
+depth and layer-class boundaries, and leaves surface lighting and primary emission
+untouched where a single surface guide is unavailable. Real-time fallback pixels retain
+the full raw progressive result rather than mixing fresh fog with an accumulated surface,
+and do not run the additional first-visible-layer volume filtering.
+Volume temporal validation ignores surface reflectance/material changes.
 
-Denoiser storage is allocated lazily at the trace resolution: 480 additional bytes per
-pixel (about 237 MiB at 960x540), rather than at full window resolution.
+Denoiser storage is allocated lazily at the trace resolution: 488 additional bytes per
+pixel (about 241 MiB at 960x540), rather than at full window resolution.
 
 #### Denoising diagnostics
 
@@ -191,6 +197,17 @@ point nvcc at an older host compiler with `-DCMAKE_CUDA_HOST_COMPILER=g++-15`, o
 ```
 CUDAFLAGS="-allow-unsupported-compiler -std=c++17" cmake -DCUDA_PATHTRACER=ON ...
 ```
+
+With GCC 16's libstdc++, nvcc 13.1 also fails on the
+`__builtin_is_virtual_base_of` trait. Disable libstdc++'s builtin-trait
+optimizations for CUDA compilation using its compatibility switch:
+
+```sh
+./build.sh '-DCMAKE_CUDA_FLAGS=-allow-unsupported-compiler -std=c++17 -D_GLIBCXX_DO_NOT_USE_BUILTIN_TRAITS'
+```
+
+These flags are cached for subsequent script runs. This remains an unsupported
+compiler combination; a CUDA-supported host compiler is preferred.
 
 Without `CUDA_PATHTRACER` the engine builds and runs as plain dhewm3, with no path tracer code compiled in.
 
@@ -256,7 +273,12 @@ The model provides:
   rather than only lights passing Doom 3's light-volume visibility tests.
 - Reciprocal GGX specular with height-correlated Smith visibility, dielectric IOR,
   Fresnel-attenuated diffuse, bounded reflectance, and diffuse/GGX mixture sampling
-  for indirect paths. Legacy specular brightness no longer invents metalness.
+  for indirect paths. The GGX lobe samples view-visible microfacet normals with
+  the matching PDF, reducing wasted samples and large grazing-angle reflection
+  weights without changing the BRDF or material roughness. Legacy specular
+  brightness no longer invents metalness.
+  The GGX distribution preserves small half-vector angles numerically on polished
+  surfaces, including rotated normals.
 - Emissive surface luminance in cd/m^2 (nits), shared consistently by visible
   emission and sampled emissive triangles.
 - A photographic camera: `EV100 = log2(N^2 / t * 100 / ISO)` and
@@ -265,8 +287,9 @@ The model provides:
   thin lens. Sensor height follows the actual viewport aspect ratio. Lens FOV is
   applied before engine culling, not only to traced rays.
 
-Run `r_ptPhysicalUI` in the console to toggle the ImGui tuning panel. For example,
-`bind F9 r_ptPhysicalUI` makes it accessible while playing. Existing ImGui mouse,
+Run `r_ptUI` in the console to toggle the unified path tracer tuning panel, then
+select its **Physical** tab. `r_ptUI physical` opens that tab directly; for example,
+`bind F9 r_ptUI` makes the panel accessible while playing. Existing ImGui mouse,
 keyboard, focus, and close-button handling apply. Controls persist as archived
 CVars and the panel locks its tuning controls during a capture; close it before
 recording a clean screenshot or sequence.
@@ -423,9 +446,21 @@ decals are separated from their receivers so coplanar blood overlays remain visi
 `blend add` (`ONE, ONE`) preserves RGB even when texture alpha is zero;
 `SRC_ALPHA, ONE` retains its authored alpha weighting. Selected-stage vertex
 colors (including inverse vertex color), fade and UV animation are preserved.
+`DST_ALPHA, ONE` overlays use a preceding supported alpha-only overwrite stage,
+including its independent UV transform, alpha and vertex-alpha modulation. This
+preserves the stock flashlight beam mask without turning its dust mesh into a
+bright cone. Missing or unsupported local masks produce a warning and omit the
+overlay; arbitrary framebuffer-alpha feedback is not implemented.
+Fully masked beam pixels retain the receiver's surface/volume denoising guides.
 In physical builds, additive unlit FX and alpha-blended flame/spark/muzzle-flash
 materials use `r_ptPhysicalEmissionNits` for HDR radiance, visible to camera and
 bounce rays. Alpha-over smoke and filter effects retain their compositing.
+Lit surfaces' glow stages retain their own UV animation, vertex/inverse-vertex
+color and `SRC_ALPHA, ONE` alpha weighting, independently of diffuse maps.
+Camera hits, bounce hits and sampled emissive-triangle lighting evaluate the same
+glow stage; Whitted mode also uses the textured glow instead of a uniform emitter.
+Fully stage-faded glows do not consume emissive-light slots; partial fades also
+reduce their light-selection weight without changing the estimator's energy.
 This does not add volumetric particle simulation or direct-light sampling of
 individual particle billboards.
 OpenGL-only heat-haze/distortion shaders (including explosion shockwaves) and
@@ -522,11 +557,112 @@ and automatic material profile selection.
 |---------|-------------|
 | `r_ptInfo` | List compiled backends and print device / memory / timing info for the active one |
 | `r_ptBenchmark <demo> <spp>` | Converge and save every recorded render-demo frame at exact spp, with 30 Hz maximum playback and timing statistics including image-write overhead |
+| `r_glBenchmark <demo>` | Replay the same recorded demo with OpenGL and save every frame for image-by-image PT comparison (also available without CUDA) |
 | `r_ptReset` | Restart accumulation and drop cached materials and textures |
-| `r_ptCompare [frames]` | Save an OpenGL and a path-traced screenshot after the given accumulated frame count |
-| `r_ptSequence <start> <end> [frames]` | Path trace a range of demo frames to screenshots |
-| `r_ptAbort` | Abort `r_ptCompare` / `r_ptSequence` |
-| `r_glSequence` / `r_glAbort` | OpenGL counterpart of `r_ptSequence` (always available) |
+| `r_ptCompare [spp]` | Save an OpenGL and a path-traced screenshot at exact samples per pixel (default 64) |
+| `r_ptSequence <start> <end> [spp]` | Path trace an inclusive range of live game ticks at exact samples per pixel (default 256) |
+| `r_ptAbort` | Abort `r_ptCompare` / `r_ptSequence` / `r_ptBenchmark`, retaining completed images and report rows |
+| `r_glSequence` | OpenGL counterpart of `r_ptSequence` (always available) |
+| `r_glAbort` | Abort `r_glSequence` or `r_glBenchmark`, retaining completed benchmark images and report rows |
+
+### OpenGL/PT benchmark frame pairs
+
+Run the same **recorded render demo** through each renderer, waiting for each run
+to finish before starting the other:
+
+```
+r_screenshotFormat 2
+r_glBenchmark demo1
+// After OpenGL Benchmark Complete:
+r_ptRenderScale 1
+r_ptBenchmark demo1 64
+```
+
+`r_glBenchmark` takes only the demo name (with optional `demos/` prefix and `.demo`
+extension); OpenGL has no PT sample budget. Both commands replay every recorded
+frame without skipping and advance at a maximum of 30 Hz, slowing down as needed
+for rendering and image writes. A single-frame `demoShot` is captured once and exits.
+Do not append an immediate `quit` when launching an asynchronous benchmark from
+the terminal; it would abort the run.
+
+OpenGL images are saved at viewport resolution, before buffer swap, without demo HUD,
+console, or ImGui overlays:
+
+```
+screenshots/glbench/demo1/run_NNNNN/frame_000001.png
+screenshots/ptbench/demo1/64spp_run_NNNNN/frame_000001_64spp.png
+```
+
+Pair images by their six-digit **frame number**, not by run-directory number.
+Runs have independent numbering. The extension follows `r_screenshotFormat`.
+Frame 1 represents the same first recorded view in both renderers; reports also
+record matching source-frame numbers, 30 Hz source timestamps, and a demo fingerprint.
+Keep viewport sizes equal and use `r_ptRenderScale 1` for equal image dimensions.
+In physical builds, match the camera's focal length/sensor width to the demo's recorded
+FOV and disable DOF if you want matching pinhole framing. Physical materials, exposure,
+and lighting intentionally differ from stock GL.
+
+GL benchmarks temporarily select OpenGL even if `r_ptDraw 1`, then restore the
+previous renderer/mode/accumulation settings on completion or `r_glAbort`. Overlapping
+GL/PT captures are rejected. GL output remains separate; no automatic diff or composite
+image is generated. Existing OpenGL renderer errors are logged separately before
+readback and do not by themselves abort the benchmark. Actual capture or GL-state
+restoration errors abort the run, retaining previously completed frames.
+
+### Local capture reports
+
+The existing three PT capture commands automatically print their starting PT
+settings and write versioned local reports under
+`screenshots/ptreports/<compare|sequence|benchmark>/run_NNNNN/` in `fs_savepath`.
+There is no new capture command and no automatic upload.
+
+`r_glBenchmark` shares this report format under
+`screenshots/glreports/benchmark/run_NNNNN/`. It records the OpenGL renderer name,
+GL rendering settings, received invocation, demo fingerprint, per-frame wall and
+render durations (including readback), image-write durations, FPS, and image paths. Its mode is `benchmark`
+and rendering model is `OpenGL`. GPU-stage timings, CUDA throughput, and PT sample
+targets are unavailable (blank CSV fields or JSON `null`), not invented GL measurements.
+`screen_render_ms` includes GL readback; `image_save_ms` covers encoding/writing.
+GPU telemetry is unavailable for GL captures because the existing sensor matching
+uses the CUDA device's PCI address; the report explicitly records this status.
+The existing `r_ptCaptureReport` and `r_ptCaptureTelemetry` switches also control
+GL benchmark reports. Reports and GL benchmarking work in CUDA-free builds too.
+
+* `metadata.json`: received startup arguments, operation command, original and
+  effective settings, source/demo fingerprint, engine revision/build, CPU/GPU
+  information, totals, and completed/aborted/report-error status. Metadata is
+  replaced atomically; interrupted runs keep their last metadata and CSV rows.
+* `frames.csv`: one row per completed image, including phase/source tick,
+  actual spp/dispatch count, trace/image dimensions, GPU tracing/denoising/
+  postprocessing/output timings, CPU scene/upload and readback timings, image
+  save time, wall time, FPS, primary samples/s, scene counts, memory and image path.
+* `settings.csv`: initial effective settings and subsequent changes with time/phase.
+* `telemetry.csv`: approximately 1 Hz GPU temperature, power, clocks, utilization,
+  memory, fan and clock-limiting reasons when the optional runtime NVML library is
+  available. The sampled device is matched to CUDA by PCI address; that address is
+  not exported. Unsupported sensors are blank, with error codes, not fabricated zeros.
+
+Compare/sequence images are kept inside their unique report directory so repeat
+runs cannot overwrite earlier report images. Benchmark images retain their
+existing numbered benchmark directory; `image_file` is relative to `fs_savepath`.
+Set `r_ptCaptureTelemetry 0` to disable sensor sampling, or `r_ptCaptureReport 0`
+to disable all reports and retain legacy compare/sequence image paths.
+
+All durations use milliseconds or explicitly labeled seconds. GPU timings exclude
+scene uploads/BVH construction and readback; `backend_wall_ms` includes them.
+`screen_render_ms` is currently available only for benchmark. Output timing includes
+diagnostic display instead of tone mapping when diagnostics are selected.
+Backend memory is an allocation estimate; telemetry memory is device-wide usage.
+Compute FPS excludes playback pacing; primary samples/s is **not** rays/s.
+Results include local reporting overhead and are not an isolated GPU microbenchmark.
+
+Startup arguments exclude the executable and cannot recover shell quoting,
+expansions or redirections. Known credential values are redacted, but local paths
+can remain: review reports before publishing. CUDA driver version denotes API
+compatibility, not the NVIDIA graphics-driver release.
+Compare and sequence now interpret their budget as actual **spp**, not dispatch
+count, choose an exact-dividing batch, and temporarily force accumulation/path-trace
+mode before restoring previous controls.
 
 Normal gameplay should use `com_fixedTic 0`. A saved `com_fixedTic 1` forces one
 simulation tick per rendered frame and produces slow motion below 60 FPS; enter
@@ -545,8 +681,59 @@ the `_spp` suffix in screenshot filenames is historical.
 
 ## Path Tracing Quality Presets
 
-Set `r_ptPreset low`, `med`, `high`, or `ultra` in the console. Presets update the following
-quality variables immediately; Medium matches the original defaults:
+### Unified tuning panel
+
+With Dear ImGui enabled, `r_ptUI` toggles one **Path Tracer** window:
+
+- **Quality** edits rendering mode, gameplay/cinematic presets, quality budgets,
+  denoising, and accumulation.
+- **Physical** contains the existing photographic camera, asset calibration,
+  material inspector, fog, and lens-effect controls. It exists only in `PT_PHYSICAL`
+  builds.
+- **All CVars** exposes registered `r_pt*` settings, searchable by name or description,
+  with type-aware controls and the CVar's declared numeric limits. Hover for descriptions;
+  Ctrl-click sliders for exact input and press Enter to commit text values.
+
+`r_ptUI quality`, `r_ptUI settings`, and (in physical builds) `r_ptUI physical` open
+the corresponding tab directly. Changes use the real CVars, so console edits and
+preset/custom transitions stay synchronized. Opening the panel does not change settings.
+Tuning controls are locked while a compare, sequence, or benchmark capture is active;
+close the panel for clean screenshots. Capture commands remain console actions.
+ImGui-disabled builds report that the panel is unavailable.
+
+The standalone `r_ptPhysicalUI` command has been removed, without an alias. Update
+existing bindings and scripts to `r_ptUI` or `r_ptUI physical`.
+
+### Preset budgets
+
+Use `r_ptPreset gameplay_med` for a lower-cost gameplay starting point, or
+`r_ptPreset cinematic_med` for full-resolution, higher-quality rendering.
+Presets update these quality variables immediately:
+
+| Preset | `r_ptRenderScale` | `r_ptSamplesPerPixel` | `r_ptMaxDepth` | `r_ptMaxLightSamples` |
+|--------|-------------------|-----------------------|----------------|-----------------------|
+| `gameplay_low` | 0.35 | 1 | 1 | 1 |
+| `gameplay_med` | 0.5 | 1 | 2 | 1 |
+| `gameplay_high` | 0.67 | 1 | 2 | 2 |
+| `gameplay_ultra` | 0.75 | 2 | 3 | 2 |
+| `cinematic_low` | 1.0 | 4 | 3 | 2 |
+| `cinematic_med` | 1.0 | 8 | 4 | 4 |
+| `cinematic_high` | 1.0 | 16 | 6 | 6 |
+| `cinematic_ultra` | 1.0 | 32 | 8 | 8 |
+
+Gameplay tiers prioritize frame cost with reduced trace resolution and 1-2 samples per
+frame; keep `r_ptDenoise 1` for low-sample gameplay. Actual frame rates depend on the
+GPU, viewport resolution, scene, and other settings, especially fog and DOF.
+Cinematic tiers keep full trace resolution and increase sample, bounce, and light budgets;
+they are intended for quality-focused rendering rather than a realtime frame-rate target.
+
+Manual edits to these four quality variables switch to `gameplay_custom` or
+`cinematic_custom`, preserving the selected family and edited values. Selecting either
+custom mode directly leaves all current settings unchanged; these are mode labels, not
+separately saved banks of settings.
+
+The original names and their values remain supported for existing configurations.
+The default is still `med`, matching the original defaults:
 
 | Preset | `r_ptRenderScale` | `r_ptSamplesPerPixel` | `r_ptMaxDepth` | `r_ptMaxLightSamples` |
 |--------|-------------------|-----------------------|----------------|-----------------------|
@@ -555,12 +742,35 @@ quality variables immediately; Medium matches the original defaults:
 | `high` | 0.75 | 6 | 4 | 3 |
 | `ultra` | 1.0 | 8 | 5 | 4 |
 
-Changing one of these variables manually switches `r_ptPreset` to `custom` and keeps the
-edited values. Selecting `custom` directly also leaves the current settings unchanged, and
-existing custom settings are preserved when upgrading. Presets do not change exposure, lighting
-colour, or other artistic controls. High and Ultra can be substantially slower; the progressive
-quality ramp still reduces samples and bounces for the first few frames after movement or a
-reset. With `r_ptAccumulation 0`, every frame uses the first-frame limits.
+Editing a legacy preset still switches to `custom`; selecting `custom` directly leaves
+settings unchanged. Existing custom settings are preserved when upgrading.
+Presets do not change denoising, exposure, lighting colour, fog, DOF, or other artistic
+controls, and do not start a capture or change gameplay simulation.
+The progressive quality ramp still reduces samples and bounces for the first few frames
+after movement or a reset. With `r_ptAccumulation 0`, every frame uses the first-frame limits.
+Compare/sequence/benchmark captures disable this ramp and retain the selected quality
+budgets, but their explicit sample/frame target remains authoritative. In particular,
+`r_ptBenchmark <demo> <samples>` uses `r_ptSamplesPerPixel` as a batch-size limit, not
+as a replacement for the requested total samples per recorded frame.
+
+### Mars-inspired sky defaults
+
+The default environment is a dusty daytime Mars-inspired gradient: muted ochre
+at the zenith, a brighter butterscotch horizon, and dark rust/regolith below.
+Its linear RGB defaults are zenith `(0.45, 0.28, 0.18)`, horizon
+`(0.65, 0.45, 0.30)`, and ground `(0.12, 0.06, 0.03)`, with
+`r_ptSkyIntensity 25` in physical builds or `1` in legacy builds. The physical
+default uses a higher environment luminance scale to remain visible under the
+photographic camera's default exposure. This is an artistic approximation, not a
+spectral atmosphere, dust-storm, or sunset simulation.
+
+In physical mode it contributes environment luminance to both camera and bounce
+misses; legacy path tracing uses it only as a primary-ray backdrop. It does not
+replace authored sky materials or add a sun, fog, or lights inside closed rooms.
+Use `r_ptSkyIntensity 0` to disable it. Existing saved intensity values, including
+the previous default `0`, and explicit colour overrides still take precedence;
+set `r_ptSkyIntensity 25` (physical) or `1` (legacy) manually to enable it in an
+existing configuration.
 
 ### Enpro lighting/look profile
 
@@ -584,8 +794,8 @@ This uses High quality and SVGF, raises exposure to 2.2 and emissive lighting to
 nudges `r_lightScale` from 2 to 2.2, and reduces specular boost to 1 to balance hot
 highlights. It keeps ACES and gamma 2.2, uses gentler low-throughput roulette for
 cleaner indirect estimates, and disables volumetric density to remove the noisy
-haze. The sky is deliberately unchanged: `r_ptSkyIntensity` only affects primary
-misses and does not light the room.
+haze. The profile leaves sky settings unchanged. In legacy mode `r_ptSkyIntensity`
+only affects primary misses; in physical mode it also illuminates bounce misses.
 
 The look is opt-in and does not change renderer defaults or map assets. `seta`
 values persist in your saved configuration; `r_lightScale` is session-only and
@@ -602,7 +812,7 @@ still need actual lights or emissive geometry to receive illumination.
 | `r_ptBackend` | `auto` | Compute backend: `auto`, `cuda` |
 | `r_ptMode` | `0` | Render mode, see above |
 | `r_ptDebug` | `0` | Print per-frame scene / timing info |
-| `r_ptPreset` | `med` | Apply a quality preset: `low`, `med`, `high`, `ultra`, or `custom` |
+| `r_ptPreset` | `med` | Gameplay or cinematic tiers: `gameplay_low/med/high/ultra/custom`, `cinematic_low/med/high/ultra/custom`; legacy `low/med/high/ultra/custom` retained |
 | `r_ptRenderScale` | `0.5` | Trace resolution relative to the viewport (0.1–1.0) |
 | `r_ptSamplesPerPixel` | `4` | Samples per pixel per frame (1–64) |
 | `r_ptMaxDepth` | `3` | Maximum ray bounces (1–16) |
@@ -627,10 +837,10 @@ still need actual lights or emissive geometry to receive illumination.
 | `r_ptExposure` | `1.0` | Exposure multiplier |
 | `r_ptGamma` | `2.2` | Output gamma, textures and colors are decoded with 2.2 |
 | `r_ptToneMapMode` | `1` | 0 = Reinhard, 1 = ACES, 2 = Uncharted 2 |
-| `r_ptSkyIntensity` | `0.0` | Sky dome intensity for primary ray misses |
-| `r_ptSkyColorZenithR/G/B` | `0.3 / 0.35 / 0.5` | Sky zenith colour |
-| `r_ptSkyColorHorizonR/G/B` | `0.4 / 0.35 / 0.3` | Sky horizon colour |
-| `r_ptSkyColorGroundR/G/B` | `0.1 / 0.08 / 0.05` | Sky ground colour |
+| `r_ptSkyIntensity` | `1.0` legacy / `25.0` physical | Environment scale; 0 disables it. Physical mode also lights bounce misses |
+| `r_ptSkyColorZenithR/G/B` | `0.45 / 0.28 / 0.18` | Dusty Martian zenith, linear RGB |
+| `r_ptSkyColorHorizonR/G/B` | `0.65 / 0.45 / 0.30` | Butterscotch Martian horizon, linear RGB |
+| `r_ptSkyColorGroundR/G/B` | `0.12 / 0.06 / 0.03` | Dark rust/regolith ground, linear RGB |
 | `r_ptVolumetric` | `0.0` | Volumetric scattering intensity (0 = off, expensive) |
 | `r_ptVolumetricDensity` | `0.008` | Fog density |
 | `r_ptVolumetricSteps` | `16` | Ray-march steps (1–128) |
@@ -706,6 +916,25 @@ using gamepads or the new settings menu.
 ## Compiling
 
 The build system is based on CMake: http://cmake.org/
+
+On Linux and other systems with Bash, after installing the dependencies below,
+run `./build.sh` to configure and compile into the repository's `build/` directory.
+The script works from any working directory and stops if configuration or compilation fails.
+It uses RelWithDebInfo and enables CUDA so the path tracer is included.
+The NVIDIA CUDA Toolkit and a supported host compiler are required; configuration
+fails if CUDA is requested but no CUDA compiler is found.
+Pass CMake configuration options as arguments, for example:
+
+```sh
+./build.sh -DCMAKE_CUDA_ARCHITECTURES=75
+```
+
+To build plain dhewm3 without the path tracer, use `./build.sh -DCUDA_PATHTRACER=OFF`.
+Other options are remembered in the build directory between runs; the script
+enables CUDA on each run unless explicitly overridden. To build in parallel,
+use `CMAKE_BUILD_PARALLEL_LEVEL=8 ./build.sh`. The resulting executable is
+`build/dhewm3` on Linux; game data must be installed separately as described above.
+Run that executable, not an older build in `neo/`.
 
 Required libraries are not part of the tree. These are:
 

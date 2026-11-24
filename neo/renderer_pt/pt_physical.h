@@ -50,7 +50,7 @@ struct viewDef_s;
 void R_PT_InitPhysical();
 void R_PT_PhysicalCamera( struct viewDef_s *view );
 void R_PT_PhysicalParams( ptRenderParams_t &params );
-void R_PT_DrawPhysicalPanel();
+void R_PT_DrawPhysicalControls();
 #endif
 
 #endif

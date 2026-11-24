@@ -121,6 +121,12 @@ struct fixture_t {
 		return result;
 	}
 
+	ptCudaDenoiseGuide_t Guide(int pixel = 0) {
+		ptCudaDenoiseGuide_t result;
+		CUDA_CHECK(cudaMemcpy(&result, buffers.guides[slot ^ 1] + pixel, sizeof(result), cudaMemcpyDeviceToHost));
+		return result;
+	}
+
 	std::vector<float> Filter(bool reuseHistory = true) {
 		const std::vector<float>& raw = accumulation.empty() ? radiance : accumulation;
 		CUDA_CHECK(cudaMemcpyAsync(buffers.radiance, radiance.data(), radiance.size() * sizeof(float), cudaMemcpyHostToDevice, stream));
@@ -582,6 +588,209 @@ static void CheckVolumeSignals() {
 	CheckNear("mixed silhouette retains raw fog instead of borrowing sky history", result[bright * 4], 7.0f);
 }
 
+static void CheckTracedPrimaryGuides() {
+	fixture_t f(1, 1);
+	f.params.samplesPerPixel = 64;
+	f.params.maxDepth = 1;
+	ptVertex_t vertices[4] = {};
+	const float positions[4][3] = {{-20, -20, 10}, {20, -20, 10}, {20, 20, 10}, {-20, 20, 10}};
+	for (int i = 0; i < 4; ++i) {
+		for (int c = 0; c < 3; ++c) vertices[i].position[c] = positions[i][c];
+		vertices[i].normal[2] = -1.0f;
+		for (int c = 0; c < 4; ++c) vertices[i].color[c] = 1.0f;
+	}
+	ptTriangle_t triangles[2] = {};
+	triangles[0].vertexIndices[1] = 1;
+	triangles[0].vertexIndices[2] = triangles[1].vertexIndices[1] = 2;
+	triangles[1].vertexIndices[2] = 3;
+	triangles[1].materialIndex = 1;
+	for (auto& triangle : triangles) triangle.flags = PT_TRI_OPAQUE;
+	ptMaterial_t materials[2] = {};
+	for (int i = 0; i < 2; ++i) {
+		for (int c = 0; c < 3; ++c) materials[i].albedo[c] = i == 0 ? 0.2f : 0.8f;
+		materials[i].albedo[3] = 1.0f;
+		materials[i].roughness = 1.0f;
+		materials[i].albedoTexture = materials[i].normalTexture = -1;
+		materials[i].specularTexture = materials[i].emissionTexture = -1;
+	}
+	ptBVHNode_t node = {};
+	node.bounds[0] = node.bounds[1] = -20.0f;
+	node.bounds[3] = node.bounds[4] = 20.0f;
+	node.bounds[2] = node.bounds[5] = 10.0f;
+	node.leftChild = node.escapeIndex = -1;
+	node.primitiveCount = 2;
+	const int indices[2] = {0, 1};
+	auto d_vertices = Allocate<ptVertex_t>(4);
+	auto d_triangles = Allocate<ptTriangle_t>(2);
+	auto d_materials = Allocate<ptMaterial_t>(2);
+	auto d_node = Allocate<ptBVHNode_t>(1);
+	auto d_indices = Allocate<int>(2);
+	CUDA_CHECK(cudaMemcpy(d_vertices, vertices, sizeof(vertices), cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(d_triangles, triangles, sizeof(triangles), cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(d_node, &node, sizeof(node), cudaMemcpyHostToDevice));
+	CUDA_CHECK(cudaMemcpy(d_indices, indices, sizeof(indices), cudaMemcpyHostToDevice));
+	ptCudaSceneView_t scene = {};
+	scene.vertices = d_vertices; scene.triangles = d_triangles;
+	scene.materials = d_materials; scene.bvhNodes = d_node; scene.triIndices = d_indices;
+	for (bool capture : {true, false}) {
+		f.params.captureTargetFrames = capture ? 1 : 0;
+		for (bool transparent : {false, true}) {
+			for (auto& material : materials) {
+				material.blendMode = transparent ? PT_BLEND_ALPHA : PT_BLEND_OPAQUE;
+				material.albedo[3] = transparent ? 0.5f : 1.0f;
+			}
+			CUDA_CHECK(cudaMemcpy(d_materials, materials, sizeof(materials), cudaMemcpyHostToDevice));
+			CUDA_CHECK(cudaMemsetAsync(f.d_accumulation, 0, 4 * sizeof(float), f.stream));
+			LaunchPathTracingKernel(&scene, f.d_accumulation, f.buffers.radiance, f.buffers.guides[0],
+				f.buffers.signals[0].radiance, f.buffers.signals[1].radiance, f.buffers.signals[2].radiance, &f.params, f.stream);
+			CUDA_CHECK(cudaGetLastError());
+			CUDA_CHECK(cudaStreamSynchronize(f.stream));
+			ptCudaDenoiseGuide_t guide;
+			CUDA_CHECK(cudaMemcpy(&guide, f.buffers.guides[0], sizeof(guide), cudaMemcpyDeviceToHost));
+			CheckNear("traced capture-only first-visible-layer depth", guide.volumeDepth, capture ? 10.0f : 0.0f);
+			CheckNear("traced guide has no unsafe temporal history", guide.historyValid, 0.0f);
+			CheckNear("traced guide coverage", guide.coverage, transparent ? PT_DENOISE_TRANSPARENT : PT_DENOISE_MIXED);
+			CheckNear("traced capture-only compatible mixture surface depth", guide.depth, capture && !transparent ? 10.0f : 0.0f);
+			if (capture && !transparent && !(guide.albedo[0] > 0.21f && guide.albedo[0] < 0.79f)) {
+				std::fprintf(stderr, "Traced material mixture must retain averaged reflectance\n");
+				std::exit(1);
+			}
+			if (!capture) {
+				f.guides[0] = guide;
+				f.params.denoiseDebugSignal = 2;
+				f.accumulation.assign(4, 7.0f);
+				f.accumulation[3] = f.radiance[3];
+				const std::vector<float> result = f.Filter(false);
+				for (int c = 0; c < 4; ++c)
+					CheckNear("traced realtime mixture retains progressive accumulation", result[c], f.accumulation[c], 0.0f);
+				CheckNear("realtime fallback does not filter discarded volume", f.lastMoments[3], PT_DENOISE_UNSUPPORTED, 0.0f);
+			}
+		}
+	}
+	CUDA_CHECK(cudaFree(d_vertices)); CUDA_CHECK(cudaFree(d_triangles));
+	CUDA_CHECK(cudaFree(d_materials)); CUDA_CHECK(cudaFree(d_node)); CUDA_CHECK(cudaFree(d_indices));
+}
+
+static void CheckFallbackVolumeGuides() {
+	for (int coverage : {PT_DENOISE_TRANSPARENT, PT_DENOISE_OVERLAY, PT_DENOISE_MIXED}) {
+		fixture_t f(31, 23);
+		f.params.captureTargetFrames = 2;
+		f.params.samplesPerPixel = 4;
+		f.params.denoiseDebugSignal = 2;
+		f.accumulation.assign(f.radiance.size(), 0.0f);
+		for (auto& guide : f.guides) {
+			guide.depth = 0.0f;
+			guide.volumeDepth = 10.0f;
+			guide.coverage = coverage;
+			guide.historyValid = 0;
+		}
+		std::vector<float> result;
+		for (int frame = 0; frame < 2; ++frame) {
+			f.params.frameIndex = frame;
+			SetVolumeNoise(f, 4, frame * 4);
+			for (size_t i = 0; i < f.radiance.size(); ++i)
+				f.accumulation[i] += (f.radiance[i] - f.accumulation[i]) / (frame + 1.0f);
+			result = f.Filter();
+		}
+		const double before = SquaredError(f.accumulation), after = SquaredError(result);
+		std::printf("Fallback coverage %d volume squared error: %.6f -> %.6f\n", coverage, before, after);
+		if (after >= before * 0.25) {
+			std::fprintf(stderr, "First-layer-guided fallback volume must reduce 8-spp error by at least 75%%\n");
+			std::exit(1);
+		}
+		CheckNear("fallback volume retains both dispatches", f.lastMoments[2], 2.0f);
+		CheckNear("fallback volume keeps first-layer depth", f.Guide().volumeDepth, 10.0f);
+		CheckNear("fallback does not invent a surface guide", f.Guide().depth, 0.0f);
+
+		f.params.frameIndex = 0;
+		SetVolumeNoise(f, 8, 0);
+		f.accumulation = f.radiance;
+		const std::vector<float> volumeOnly = f.Filter(false);
+		const size_t bright = f.guides.size() / 2;
+		for (int c = 0; c < 3; ++c) f.accumulation[bright * 4 + c] = (f.radiance[bright * 4 + c] += 20.0f);
+		result = f.Filter(false);
+		for (size_t i = 0; i < result.size(); ++i)
+			if (i % 4 != 3) CheckNear("fallback surface/emission stays sharp",
+				result[i] - volumeOnly[i], i / 4 == bright ? 20.0f : 0.0f, 3e-5f);
+
+		f.params.captureTargetFrames = 0;
+		for (size_t i = 0; i < f.accumulation.size(); ++i) if (i % 4 != 3) f.accumulation[i] = 7.0f;
+		result = f.Filter(false);
+		for (size_t i = 0; i < result.size(); ++i)
+			CheckNear("realtime fallback preserves its progressive raw mean", result[i], f.accumulation[i]);
+	}
+
+	for (bool layerBoundary : {false, true}) {
+		fixture_t edge(19, 13);
+		edge.params.captureTargetFrames = 1;
+		SetVolumeNoise(edge, 8, 0);
+		for (int y = 0; y < edge.params.height; ++y) {
+			for (int x = 0; x < edge.params.width; ++x) {
+				const int pixel = y * edge.params.width + x;
+				edge.guides[pixel].depth = 0.0f;
+				edge.guides[pixel].volumeDepth = x < 9 || layerBoundary ? 10.0f : 30.0f;
+				edge.guides[pixel].coverage = x < 9 || !layerBoundary ? PT_DENOISE_TRANSPARENT : PT_DENOISE_OVERLAY;
+				edge.guides[pixel].historyValid = 0;
+				for (int c = 0; c < 3; ++c)
+					edge.radiance[pixel * 4 + c] = edge.volume[pixel * 4 + c] = x < 9 ? 0.5f : 3.0f;
+			}
+		}
+		const std::vector<float> result = edge.Filter();
+		for (size_t i = 0; i < result.size(); ++i)
+			CheckNear("fallback volume does not cross depth/layer boundaries", result[i], edge.radiance[i], 3e-5f);
+	}
+
+	fixture_t steady(1, 1);
+	steady.params.denoiseDebugSignal = 2;
+	SetVolumeNoise(steady, 8, 0);
+	for (int c = 0; c < 3; ++c) steady.radiance[c] = steady.volume[c] = 1.0f;
+	steady.Filter();
+	for (int c = 0; c < 3; ++c) steady.guides[0].albedo[c] = steady.guides[0].specularAlbedo[c] = 0.04f;
+	steady.guides[0].materialIndex++;
+	steady.Filter();
+	CheckNear("surface reflectance changes do not reject volume history", steady.lastMoments[2], 2.0f);
+}
+
+static void CheckCompatibleCaptureMaterials() {
+	fixture_t f(19, 13);
+	f.params.captureTargetFrames = 2;
+	f.accumulation.assign(f.radiance.size(), 0.0f);
+	std::vector<float> result;
+	for (int frame = 0; frame < 2; ++frame) {
+		f.params.frameIndex = frame;
+		for (size_t pixel = 0; pixel < f.guides.size(); ++pixel) {
+			f.guides[pixel].materialIndex = frame;
+			for (int c = 0; c < 3; ++c) {
+				f.guides[pixel].albedo[c] = frame == 0 ? 0.1f : 0.9f;
+				f.radiance[pixel * 4 + c] = f.guides[pixel].albedo[c] * (pixel % 2 ? 0.75f : 1.25f);
+				f.accumulation[pixel * 4 + c] += (f.radiance[pixel * 4 + c] - f.accumulation[pixel * 4 + c]) / (frame + 1.0f);
+			}
+			f.accumulation[pixel * 4 + 3] = f.radiance[pixel * 4 + 3];
+		}
+		result = f.Filter();
+	}
+	double before = 0.0, after = 0.0;
+	for (size_t i = 0; i < result.size(); i += 4) {
+		before += std::pow(f.accumulation[i] - 0.5f, 2);
+		after += std::pow(result[i] - 0.5f, 2);
+	}
+	if (after >= before * 0.25) {
+		std::fprintf(stderr, "Compatible material mixtures must reduce illumination error by at least 75%%\n");
+		std::exit(1);
+	}
+	CheckNear("compatible mixed capture retains spatial eligibility", f.Guide().depth, 10.0f);
+	CheckNear("compatible mixture remains classified mixed", f.Guide().coverage, PT_DENOISE_MIXED);
+	CheckNear("mixed material history is not reprojected", f.Guide().historyValid, 0.0f);
+	CheckNear("compatible material capture retains dispatches", f.lastMoments[2], 2.0f);
+	f.params.frameIndex = 2;
+	for (auto& guide : f.guides) guide.depth = 20.0f;
+	f.UpdatePositions();
+	result = f.Filter();
+	CheckNear("true geometric mixtures retain surface fallback", f.Guide().depth, 0.0f);
+	for (size_t i = 0; i < result.size(); ++i)
+		CheckNear("true geometric mixture preserves raw surface mean", result[i], f.accumulation[i]);
+}
+
 static void CheckDiagnostics() {
 	fixture_t f(6, 1);
 	for (int i = 0; i < 6; i++) f.guides[i].coverage = i;
@@ -661,8 +870,8 @@ static void CheckProgressiveCapture() {
 	textured.guides[0].materialIndex++;
 	for (int c = 0; c < 3; c++) textured.accumulation[c] = (2.0f + textured.radiance[c]) / 3.0f;
 	result = textured.Filter();
-	CheckNear("mixed capture surface preserves raw progressive fallback", result[0], textured.accumulation[0]);
-	CheckNear("mixed capture surface has no filtered history", textured.lastMoments[2], 0.0f);
+	CheckNear("compatible capture material mean is preserved", result[0], textured.accumulation[0]);
+	CheckNear("compatible capture material retains spatial filtering", textured.lastMoments[2], 3.0f);
 
 	fixture_t noisy(19, 13);
 	noisy.params.captureTargetFrames = 128;
@@ -709,6 +918,9 @@ int main() {
 	CheckHistoryRejection();
 	CheckSeparatedSignals();
 	CheckVolumeSignals();
+	CheckTracedPrimaryGuides();
+	CheckFallbackVolumeGuides();
+	CheckCompatibleCaptureMaterials();
 	CheckDiagnostics();
 	CheckProgressiveCapture();
 	std::puts("CUDA SVGF regression checks passed");

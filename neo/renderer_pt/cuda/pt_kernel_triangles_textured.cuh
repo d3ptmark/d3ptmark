@@ -256,7 +256,7 @@ __global__ void TriangleDrawTexturedKernel(
 			b = fminf(albedoB, 1.0f);
 		}
 	} else {
-		// sky background (scaled by skyIntensity, defaults to black)
+		// Sky background scaled by the configured environment intensity.
 		r = skyColorHorizon[0] * skyIntensity;
 		g = skyColorHorizon[1] * skyIntensity;
 		b = skyColorHorizon[2] * skyIntensity;

@@ -11,6 +11,7 @@
 #include "renderer_pt/pt_material_editor.h"
 #include "renderer_pt/pt_material_profiles.h"
 #include "renderer_pt/pt_render.h"
+#include "renderer_pt/pt_ui.h"
 #include "sys/sys_imgui.h"
 
 #include <errno.h>
@@ -217,13 +218,13 @@ void R_PT_UpdateMaterialPick( const viewDef_t *view ) {
 static void PT_MaterialPick_f( const idCmdArgs &args ) {
 	if ( !PT_RequestMaterialPick() ) return;
 	using namespace D3::ImGuiHooks;
-	if ( IsImguiEnabled() ) OpenWindow( D3_ImGuiWin_PhysicalPT );
+	if ( IsImguiEnabled() ) R_PT_OpenUI( "physical" );
 }
 
 static void PT_Material_f( const idCmdArgs &args ) {
 	if ( args.Argc() < 2 ) {
 		common->Printf( "r_ptMaterial select <name> | set <property> <value(s)> | reset | revert | save | status\n"
-			"r_ptMaterialPick selects the center surface and opens the physical panel.\n" );
+			"r_ptMaterialPick selects the center surface and opens the Physical tab.\n" );
 		return;
 	}
 	if ( !idStr::Icmp( args.Argv( 1 ), "status" ) && args.Argc() == 2 ) {

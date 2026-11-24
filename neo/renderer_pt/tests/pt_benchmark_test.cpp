@@ -6,6 +6,11 @@
 #define CHECK(x) do { if ( !(x) ) { fprintf( stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x ); return 1; } } while (0)
 
 int main() {
+	CHECK( !PT_BenchmarkCanAdvance( false, 1000 ) );
+	CHECK( !PT_BenchmarkCanAdvance( true, 0 ) );
+	CHECK( !PT_BenchmarkCanAdvance( true, 1000.0 / 30.0 - 0.0001 ) );
+	CHECK( PT_BenchmarkCanAdvance( true, 1000.0 / 30.0 ) );
+	CHECK( PT_BenchmarkCanAdvance( true, 1000 ) );
 	int samples = 17;
 	const char *bad[] = { "", "0", "-1", "32x", "1.5", "nan", "100001", "999999999999999999999999", " 32", "+32" };
 	for ( const char *text : bad ) {
@@ -41,6 +46,12 @@ int main() {
 	stats.AddImage( 8 );
 	CHECK( stats.imagesWritten == 2 && stats.imageMilliseconds == 20 );
 	CHECK( stats.renderMilliseconds == 45 && stats.gpuMilliseconds == 23 );
+	ptBenchmarkStatistics_t glStats;
+	glStats.AddFrame( 40, 0, 20, 0 );
+	glStats.AddImage( 5 );
+	CHECK( glStats.TotalMilliseconds() == 40 && glStats.renderMilliseconds == 20 );
+	CHECK( glStats.gpuMilliseconds == 0 && glStats.dispatches == 0 );
+	CHECK( glStats.imagesWritten == 1 && glStats.imageMilliseconds == 5 );
 	CHECK( !strcmp( PT_BenchmarkImageExtension( 0 ), "tga" ) );
 	CHECK( !strcmp( PT_BenchmarkImageExtension( 1 ), "bmp" ) );
 	CHECK( !strcmp( PT_BenchmarkImageExtension( 2 ), "png" ) );

@@ -39,6 +39,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "ui/UserInterface.h"
 
 #include "renderer/tr_local.h"
+#include "renderer_pt/pt_benchmark.h"
 
 #include "framework/GameCallbacks_local.h"
 #include "framework/Game.h"
@@ -1417,6 +1418,9 @@ struct screenshotWriteContext_t {
 	bool failed;
 };
 
+static bool screenshotWriteSucceeded = false;
+bool R_ScreenshotWriteSucceeded() { return screenshotWriteSucceeded; }
+
 static void WriteScreenshotForSTBIW(void* context, void* data, int size)
 {
 	screenshotWriteContext_t *write = (screenshotWriteContext_t *)context;
@@ -1477,6 +1481,7 @@ void idRenderSystemLocal::TakeScreenshot( int width, int height, const char *fil
 	int			i, j;
 
 	takingScreenshot = true;
+	screenshotWriteSucceeded = false;
 
 	int	pix = width * height;
 	int lineSize = width * 3;
@@ -1524,7 +1529,7 @@ void idRenderSystemLocal::TakeScreenshot( int width, int height, const char *fil
 		g_screenshotFormat = cvarSystem->GetCVarInteger( "r_screenshotFormat" );
 	}
 
-	R_WriteScreenshotImage( fileName, buffer, width, height, g_screenshotFormat,
+	screenshotWriteSucceeded = R_WriteScreenshotImage( fileName, buffer, width, height, g_screenshotFormat,
 		strstr( fileName, "viewnote" ) ? "fs_cdpath" : "fs_savepath" );
 
 	g_screenshotFormat = -1;
@@ -2305,7 +2310,8 @@ R_InitCommands
 */
 void R_InitCommands( void ) {
 	cmdSystem->AddCommand( "r_glSequence", R_GLSequence_f, CMD_FL_RENDERER, "renders a range of demo frames with OpenGL and saves them as screenshots" );
-	cmdSystem->AddCommand( "r_glAbort", R_GLAbort_f, CMD_FL_RENDERER, "aborts r_glSequence" );
+	cmdSystem->AddCommand( "r_glBenchmark", R_GL_Benchmark_f, CMD_FL_RENDERER, "replays and saves every recorded render-demo frame with OpenGL", idCmdSystem::ArgCompletion_DemoName );
+	cmdSystem->AddCommand( "r_glAbort", R_GLAbort_f, CMD_FL_RENDERER, "aborts r_glSequence or r_glBenchmark" );
 #ifdef HAVE_PATHTRACER
 	R_PT_InitCommands();
 #endif

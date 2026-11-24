@@ -1055,6 +1055,8 @@ const int GLS_DEFAULT							= GLS_DEPTHFUNC_ALWAYS;
 
 void R_Init( void );
 void R_InitOpenGL( void );
+bool R_ScreenshotWriteSucceeded();
+void R_IssueRenderCommands( void );
 bool R_WriteScreenshotImage( const char *fileName, const byte *rgb, int width, int height,
 							int format, const char *basePath = "fs_savepath" );
 
@@ -1326,6 +1328,7 @@ DRAW_PATHTRACER (renderer_pt/)
 
 // OpenGL sequence renderer (always available)
 void	R_GLSequence_f( const idCmdArgs &args );
+bool	R_GLSequenceActive();
 void	R_GLAbort_f( const idCmdArgs &args );
 void	RB_GLSequenceCheck( void );
 

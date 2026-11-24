@@ -6,8 +6,10 @@
 #include "framework/CmdSystem.h"
 #include "renderer/tr_local.h"
 #include "renderer_pt/pt_quality_preset.h"
+#include "renderer_pt/pt_ui.h"
 #include "renderer_pt/pt_render.h"
 #include "renderer_pt/pt_benchmark.h"
+#include "renderer_pt/pt_capture_report.h"
 #include "renderer_pt/pt_scene.h"
 #include "renderer_pt/pt_physical.h"
 #ifdef PT_PHYSICAL
@@ -36,11 +38,13 @@ static void PT_PresetCompletion( const idCmdArgs &args, void ( *callback )( cons
 	for ( int i = 0; i < PT_QUALITY_PRESET_COUNT; i++ ) {
 		callback( va( "%s %s", args.Argv( 0 ), ptQualityPresets[i].name ) );
 	}
-	callback( va( "%s custom", args.Argv( 0 ) ) );
+	for ( int i = 0; i < PT_CUSTOM_QUALITY_PRESET_COUNT; i++ ) {
+		callback( va( "%s %s", args.Argv( 0 ), ptCustomQualityPresets[i] ) );
+	}
 }
 
 idCVar r_ptPreset( "r_ptPreset", "med", CVAR_RENDERER | CVAR_ARCHIVE,
-	"path tracer quality preset: low, med, high, ultra, or custom", PT_PresetCompletion );
+	"path tracer quality: gameplay_low/med/high/ultra/custom or cinematic_low/med/high/ultra/custom; legacy low/med/high/ultra/custom supported", PT_PresetCompletion );
 idCVar r_ptRenderScale( "r_ptRenderScale", "0.5", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "trace resolution relative to the viewport", 0.1f, 1.0f );
 idCVar r_ptSamplesPerPixel( "r_ptSamplesPerPixel", "4", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "samples per pixel per frame", 1, 64 );
 idCVar r_ptMaxDepth( "r_ptMaxDepth", "3", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "maximum ray bounces", 1, 16 );
@@ -79,16 +83,22 @@ idCVar r_ptBloomRadius( "r_ptBloomRadius", "0.025", CVAR_RENDERER | CVAR_ARCHIVE
 idCVar r_ptLensFlare( "r_ptLensFlare", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "optional screen-space lens ghost strength (0 = off)", 0.0f, 1.0f );
 
 // sky
-idCVar r_ptSkyIntensity( "r_ptSkyIntensity", "0.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "sky dome intensity for primary ray misses" );
-idCVar r_ptSkyColorZenithR( "r_ptSkyColorZenithR", "0.3", CVAR_RENDERER | CVAR_FLOAT, "sky zenith red" );
-idCVar r_ptSkyColorZenithG( "r_ptSkyColorZenithG", "0.35", CVAR_RENDERER | CVAR_FLOAT, "sky zenith green" );
-idCVar r_ptSkyColorZenithB( "r_ptSkyColorZenithB", "0.5", CVAR_RENDERER | CVAR_FLOAT, "sky zenith blue" );
-idCVar r_ptSkyColorHorizonR( "r_ptSkyColorHorizonR", "0.4", CVAR_RENDERER | CVAR_FLOAT, "sky horizon red" );
-idCVar r_ptSkyColorHorizonG( "r_ptSkyColorHorizonG", "0.35", CVAR_RENDERER | CVAR_FLOAT, "sky horizon green" );
-idCVar r_ptSkyColorHorizonB( "r_ptSkyColorHorizonB", "0.3", CVAR_RENDERER | CVAR_FLOAT, "sky horizon blue" );
-idCVar r_ptSkyColorGroundR( "r_ptSkyColorGroundR", "0.1", CVAR_RENDERER | CVAR_FLOAT, "sky ground red" );
-idCVar r_ptSkyColorGroundG( "r_ptSkyColorGroundG", "0.08", CVAR_RENDERER | CVAR_FLOAT, "sky ground green" );
-idCVar r_ptSkyColorGroundB( "r_ptSkyColorGroundB", "0.05", CVAR_RENDERER | CVAR_FLOAT, "sky ground blue" );
+idCVar r_ptSkyIntensity( "r_ptSkyIntensity",
+#ifdef PT_PHYSICAL
+	"25.0",
+#else
+	"1.0",
+#endif
+	CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "sky environment scale (0 = off; physical mode also lights bounce misses)" );
+idCVar r_ptSkyColorZenithR( "r_ptSkyColorZenithR", "0.45", CVAR_RENDERER | CVAR_FLOAT, "Martian sky zenith red (linear RGB)" );
+idCVar r_ptSkyColorZenithG( "r_ptSkyColorZenithG", "0.28", CVAR_RENDERER | CVAR_FLOAT, "Martian sky zenith green (linear RGB)" );
+idCVar r_ptSkyColorZenithB( "r_ptSkyColorZenithB", "0.18", CVAR_RENDERER | CVAR_FLOAT, "Martian sky zenith blue (linear RGB)" );
+idCVar r_ptSkyColorHorizonR( "r_ptSkyColorHorizonR", "0.65", CVAR_RENDERER | CVAR_FLOAT, "Martian dusty horizon red (linear RGB)" );
+idCVar r_ptSkyColorHorizonG( "r_ptSkyColorHorizonG", "0.45", CVAR_RENDERER | CVAR_FLOAT, "Martian dusty horizon green (linear RGB)" );
+idCVar r_ptSkyColorHorizonB( "r_ptSkyColorHorizonB", "0.30", CVAR_RENDERER | CVAR_FLOAT, "Martian dusty horizon blue (linear RGB)" );
+idCVar r_ptSkyColorGroundR( "r_ptSkyColorGroundR", "0.12", CVAR_RENDERER | CVAR_FLOAT, "Martian regolith ground red (linear RGB)" );
+idCVar r_ptSkyColorGroundG( "r_ptSkyColorGroundG", "0.06", CVAR_RENDERER | CVAR_FLOAT, "Martian regolith ground green (linear RGB)" );
+idCVar r_ptSkyColorGroundB( "r_ptSkyColorGroundB", "0.03", CVAR_RENDERER | CVAR_FLOAT, "Martian regolith ground blue (linear RGB)" );
 
 // volumetrics
 idCVar r_ptVolumetric( "r_ptVolumetric", "0.0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_FLOAT, "volumetric light scattering intensity (0 = off, expensive)" );
@@ -144,13 +154,14 @@ static void PT_PresetChanged( const idCVar &cvar ) {
 	if ( ptApplyingPreset ) {
 		return;
 	}
-	if ( idStr::Icmp( cvar.GetString(), "custom" ) == 0 ) {
-		ptLastPresetName = "custom";
+	const char *customName = PT_FindCustomQualityPreset( cvar.GetString() );
+	if ( customName ) {
+		ptLastPresetName = customName;
 		return;
 	}
 	const ptQualityPreset_t *preset = PT_FindQualityPreset( cvar.GetString() );
 	if ( !preset ) {
-		common->Warning( "invalid r_ptPreset '%s'; use low, med, high, ultra, or custom", cvar.GetString() );
+		common->Warning( "invalid r_ptPreset '%s'; use gameplay_low/med/high/ultra/custom or cinematic_low/med/high/ultra/custom (legacy low/med/high/ultra/custom also supported)", cvar.GetString() );
 		ptApplyingPreset = true;
 		r_ptPreset.SetString( ptLastPresetName );
 		ptApplyingPreset = false;
@@ -167,7 +178,7 @@ static void PT_PresetChanged( const idCVar &cvar ) {
 }
 
 static void PT_QualityChanged( const idCVar & ) {
-	if ( ptApplyingPreset || idStr::Icmp( r_ptPreset.GetString(), "custom" ) == 0 ) {
+	if ( ptApplyingPreset || PT_FindCustomQualityPreset( r_ptPreset.GetString() ) ) {
 		return;
 	}
 	const ptQualityPreset_t *preset = PT_FindQualityPreset( r_ptPreset.GetString() );
@@ -180,7 +191,7 @@ static void PT_QualityChanged( const idCVar & ) {
 		r_ptMaxDepth.GetInteger(), r_ptMaxLightSamples.GetInteger()
 	};
 	if ( !PT_QualitySettingsEqual( current, preset->settings ) ) {
-		r_ptPreset.SetString( "custom" );
+		r_ptPreset.SetString( preset->customName );
 	}
 }
 
@@ -360,6 +371,7 @@ Called once from R_InitCommands, not on every vid_restart.
 */
 void R_PT_InitCommands( void ) {
 	PT_InitQualityPresets();
+	R_PT_InitUI();
 #ifdef PT_PHYSICAL
 	R_PT_InitPhysical();
 #endif
@@ -400,6 +412,7 @@ RB_PT_Shutdown
 ========================
 */
 void RB_PT_Shutdown( void ) {
+	R_PT_ReportEnd( false, "renderer_shutdown" );
 	PT_DestroyBackend();
 	if ( pt.glTexture ) {
 		qglDeleteTextures( 1, &pt.glTexture );
@@ -432,7 +445,7 @@ static void PT_SetupParams( ptRenderParams_t &p, const viewDef_t *viewDef, int t
 	p.renderMode = r_ptMode.GetInteger();
 
 	p.samplesPerPixel = r_ptSamplesPerPixel.GetInteger();
-	if ( R_PT_BenchmarkActive() ) p.samplesPerPixel = R_PT_BenchmarkBatch();
+	if ( RB_PT_IsCapturing() ) p.samplesPerPixel = RB_PT_GetCaptureBatch();
 	p.maxDepth = r_ptMaxDepth.GetInteger();
 	p.maxLightSamples = r_ptMaxLightSamples.GetInteger();
 	p.indirectProb = r_ptIndirectProb.GetFloat();
@@ -615,14 +628,21 @@ Returns false when the view should be drawn by the OpenGL renderer instead
 remote cameras and portal skies).
 ========================
 */
+static void PT_CancelFailedCapture() {
+	if ( !tr.takingScreenshot && !R_PT_BenchmarkActive() ) RB_PT_CancelCaptures();
+}
+
 bool RB_PT_DrawView( void ) {
 	const viewDef_t *viewDef = backEnd.viewDef;
 	if ( !r_ptDraw.GetBool() || !viewDef || !viewDef->viewEntitys || viewDef->isSubview ) {
 		return false;
 	}
 	if ( !PT_EnsureBackend() ) {
+		PT_CancelFailedCapture();
 		return false;
 	}
+	const double reportRenderStart = Sys_MillisecondsPrecise();
+	double sceneMilliseconds = 0;
 
 	if ( !pt.backend->Resize( glConfig.vidWidth, glConfig.vidHeight ) ) {
 		return false;
@@ -666,6 +686,7 @@ bool RB_PT_DrawView( void ) {
 		params.fovX = pt.prevParams.fovX;
 		params.fovY = pt.prevParams.fovY;
 	} else {
+		const double sceneStart = Sys_MillisecondsPrecise();
 		// Capture reuses this snapshot until the next cinematic tick resets accumulation.
 		pt.scene->BeginFrame();
 		for ( int i = 0; i < viewDef->numDrawSurfs; i++ ) {
@@ -685,9 +706,11 @@ bool RB_PT_DrawView( void ) {
 		const bool uploaded = pt.backend->UploadScene( *pt.scene );
 		pt.scene->ReleasePendingTextures();
 		if ( !uploaded ) {
+			PT_CancelFailedCapture();
 			pt.scene->Clear();
 			return false;
 		}
+		sceneMilliseconds = Sys_MillisecondsPrecise() - sceneStart;
 	}
 
 	bool resetHistory = !pt.havePrev || PT_TraceSettingsChanged( params, pt.prevParams )
@@ -711,17 +734,28 @@ bool RB_PT_DrawView( void ) {
 		PT_ApplyProgressiveQuality( params, pt.backend->GetAccumulatedFrames() );
 	}
 
+	const int previousAccumulated = pt.backend->GetAccumulatedFrames();
 	if ( !pt.backend->Render( params ) ) {
+		PT_CancelFailedCapture();
 		return false;
 	}
 
 	pt.pixels.SetNum( traceWidth * traceHeight * 4, false );
+	const double readbackStart = Sys_MillisecondsPrecise();
 	if ( !pt.backend->ReadPixels( pt.pixels.Ptr(), traceWidth, traceHeight ) ) {
+		PT_CancelFailedCapture();
 		return false;
 	}
+	const double readbackMilliseconds = Sys_MillisecondsPrecise() - readbackStart;
 
 	RB_BeginDrawingView();
 	PT_BlitToViewport( pt.pixels.Ptr(), traceWidth, traceHeight );
+	if ( R_PT_ReportActive() && !tr.takingScreenshot && pt.backend->GetAccumulatedFrames() == previousAccumulated + 1 ) {
+		ptBackendStats_t stats;
+		pt.backend->GetStats( stats );
+		R_PT_ReportRendered( params, stats, sceneMilliseconds,
+			Sys_MillisecondsPrecise() - reportRenderStart, readbackMilliseconds );
+	}
 	if ( R_PT_BenchmarkActive() && !tr.takingScreenshot ) {
 		ptBackendStats_t stats;
 		pt.backend->GetStats( stats );

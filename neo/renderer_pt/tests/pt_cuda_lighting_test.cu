@@ -76,6 +76,11 @@ struct fixture_t {
 			materials[i].albedoTexture = materials[i].normalTexture = -1;
 			materials[i].specularTexture = materials[i].emissionTexture = -1;
 			materials[i].texTransform[0] = materials[i].texTransform[4] = 1.0f;
+			materials[i].emissionTransform[0] = materials[i].emissionTransform[4] = 1.0f;
+			materials[i].emissionAlpha = 1.0f;
+			materials[i].additiveMaskTexture = -1;
+			materials[i].additiveMaskAlpha = 1.0f;
+			materials[i].additiveMaskTransform[0] = materials[i].additiveMaskTransform[4] = 1.0f;
 		}
 		triangles[0].flags |= PT_TRI_AREA_LIGHT;
 		for (int c = 0; c < 3; c++) materials[0].emission[c] = 1.0f;
@@ -295,6 +300,7 @@ static double TracePath(fixture_t& fixture, int maxDepth, int maxLightSamples, f
 	params.camRight[0] = 1.0f;
 	params.camUp[1] = 1.0f;
 	params.width = params.height = 256;
+	params.captureTargetFrames = 1;
 	params.samplesPerPixel = samplesPerPixel;
 	params.maxDepth = maxDepth;
 	params.maxLightSamples = maxLightSamples;
@@ -368,11 +374,14 @@ static double TracePath(fixture_t& fixture, int maxDepth, int maxLightSamples, f
 	}
 	if (meanResidual) *meanResidual = residualTotal / pixels;
 	if (meanVolume) *meanVolume = volumeTotal / pixels;
+	const bool visibleLayer = fixture.node.primitiveCount > 0
+		&& (fixture.materials[1].alphaTest <= 0.0f || fixture.materials[1].albedo[3] >= fixture.materials[1].alphaTest);
 	for (int i = 0; i < pixels; i++) {
 		CheckNear("first surface guide depth", guide[i].depth, expectedGuideDepth, 1e-6);
+		CheckNear("first visible layer volume depth", guide[i].volumeDepth, visibleLayer ? 1.0 : 0.0, 1e-6);
 		const double normalLength = guide[i].normal[0] * guide[i].normal[0]
 			+ guide[i].normal[1] * guide[i].normal[1] + guide[i].normal[2] * guide[i].normal[2];
-		CheckNear("guide normal length", normalLength, expectedGuideDepth > 0.0f ? 1.0 : 0.0, 1e-6);
+		CheckNear("first visible layer normal length", normalLength, visibleLayer ? 1.0 : 0.0, 1e-6);
 		CheckNear("guide history eligibility", guide[i].historyValid, expectedGuideDepth > 0.0f ? expectedHistoryValid : 0, 0.0);
 		if (expectedGuideDepth > 0.0f) {
 			CheckNear("guide world position", guide[i].position[2], 0.0, 1e-6);
@@ -447,11 +456,12 @@ static void CheckWeaponAndFx() {
 	params.rayOffset = 0.0001f;
 	params.emissionBoost = 1;
 	float* device = Allocate<float>(4);
+	ptCudaDenoiseGuide_t* guide = Allocate<ptCudaDenoiseGuide_t>(1);
 	float result[4];
 	const auto render = [&]() {
 		fixture.Upload();
 		PathTracingKernel<<<1, 1>>>(fixture.d_vertices, fixture.d_triangles, fixture.d_node, fixture.d_indices,
-			fixture.d_materials, fixture.d_textures, fixture.d_lights, 0, device, params);
+			fixture.d_materials, fixture.d_textures, fixture.d_lights, 0, device, params, NULL, guide);
 		CUDA_CHECK(cudaGetLastError());
 		CUDA_CHECK(cudaMemcpy(result, device, sizeof(result), cudaMemcpyDeviceToHost));
 	};
@@ -482,6 +492,72 @@ static void CheckWeaponAndFx() {
 	front.albedo[3] = 0.25f;
 	render();
 	CheckNear("SRC_ALPHA ONE respects partial alpha", result[0], 0.1, 1e-6);
+	front.additiveUsesAlpha = PT_ADDITIVE_LOCAL_MASK;
+	front.albedo[3] = 1;
+	front.additiveMaskTexture = 0;
+	for (int i = 0; i < 3; i++) fixture.vertices[i].texcoord[0] = 0.25f;
+	fixture.texels[0][3] = fixture.texels[0][7] = 0;
+	for (int c = 0; c < 3; c++) fixture.materials[1].emission[c] = 0.7f;
+	render();
+	CheckNear("DST_ALPHA ONE zero mask preserves receiver", result[0], 0.7, 1e-6);
+	for (int capture : {0, 1}) {
+		params.captureTargetFrames = capture;
+		render();
+		ptCudaDenoiseGuide_t hostGuide;
+		CUDA_CHECK(cudaMemcpy(&hostGuide, guide, sizeof(hostGuide), cudaMemcpyDeviceToHost));
+		CheckNear("invisible beam preserves receiver surface guide", hostGuide.depth, 3, 1e-6);
+		CheckNear("invisible beam preserves first visible volume layer", hostGuide.volumeDepth, capture ? 3 : 0, 1e-6);
+	}
+	const auto checkMasked = [&](const char* label, double expected) {
+		for (int capture : {0, 1}) {
+			params.captureTargetFrames = capture;
+			render();
+			CheckNear(label, result[0], expected, 2e-6);
+			TriangleDrawRayTracedKernel<<<1, 1>>>(fixture.d_vertices, fixture.d_triangles, fixture.d_node, fixture.d_indices,
+				fixture.d_materials, fixture.d_textures, NULL, 0, device, params);
+			CUDA_CHECK(cudaGetLastError());
+			CUDA_CHECK(cudaMemcpy(result, device, sizeof(result), cudaMemcpyDeviceToHost));
+			CheckNear(label, result[0], expected, 2e-6);
+		}
+		params.captureTargetFrames = 0;
+	};
+	checkMasked("masked additive zero alpha in PT and Whitted", 0.7);
+	fixture.texels[0][3] = 128;
+	fixture.texels[0][7] = 255;
+	fixture.texels[1][3] = fixture.texels[1][7] = 0;
+	front.albedoTexture = 1;
+	front.albedo[3] = 0;
+	front.texTransform[2] = 0.5f;
+	front.useVertexColor = 1;
+	for (int i = 0; i < 3; i++) fixture.vertices[i].color[3] = 0.25f;
+	const double halfMask = 128.0 / 255.0;
+	checkMasked("mask UV independent of dust UV and source alpha", 0.7 + 0.4 * halfMask);
+	front.additiveMaskVertexColor = 1;
+	checkMasked("mask vertex alpha", 0.7 + 0.4 * halfMask * 0.25);
+	front.additiveMaskVertexColor = 2;
+	checkMasked("mask inverse vertex alpha", 0.7 + 0.4 * halfMask * 0.75);
+	front.additiveMaskVertexColor = 0;
+	front.additiveMaskAlpha = 2;
+	checkMasked("mask alpha saturates after texture modulation", 1.1);
+	front.additiveMaskVertexColor = 2;
+	front.additiveMaskAlpha = 0.5f;
+	checkMasked("mask stage alpha", 0.7 + 0.4 * halfMask * 0.75 * 0.5);
+	front.additiveMaskTransform[2] = 0.5f;
+	checkMasked("mask independent animated transform", 0.85);
+#ifdef PT_PHYSICAL
+	params.physicalIor = 1.5f;
+	front.emissiveOverlay = 1;
+	checkMasked("physical masked additive capture and realtime", 0.85);
+	params.physicalIor = 0;
+	front.emissiveOverlay = 0;
+#endif
+	front.additiveMaskTexture = -1;
+	checkMasked("unavailable local mask omits only overlay", 0.7);
+	front.albedoTexture = -1;
+	front.texTransform[2] = 0;
+	front.useVertexColor = 0;
+	for (int i = 0; i < 3; i++) fixture.vertices[i].color[3] = 1;
+	front.additiveUsesAlpha = PT_ADDITIVE_SOURCE_ALPHA;
 	front.blendMode = PT_BLEND_ALPHA;
 	front.albedo[3] = 0;
 	for (int c = 0; c < 3; c++) {
@@ -512,6 +588,89 @@ static void CheckWeaponAndFx() {
 	render();
 	CheckNear("physical alpha-over flame calibrated radiance", result[0], 0.5, 1e-6);
 #endif
+	CUDA_CHECK(cudaFree(device));
+	CUDA_CHECK(cudaFree(guide));
+}
+
+static void CheckEmissionStages() {
+	fixture_t fixture;
+	ptMaterial_t& material = fixture.materials[0];
+	for (int c = 0; c < 3; c++) {
+		material.albedo[c] = 0;
+		material.emission[c] = 0.2f + 0.1f * c;
+	}
+	const double directBaseline = Mean(Sample(fixture, 1, 1));
+	ptRenderParams_t params = {};
+	params.width = params.height = params.samplesPerPixel = params.maxDepth = 1;
+	params.camPos[2] = 1;
+	params.camForward[2] = -1;
+	params.camUp[1] = params.camRight[0] = 1;
+	params.rayOffset = 0.0001f;
+	params.emissionBoost = 2;
+	float* device = Allocate<float>(4);
+	const auto check = [&](const char* label, double factor) {
+		CheckNear(label, Mean(Sample(fixture, 1, 1)), directBaseline * factor, 2e-6);
+		CheckNear(label, Helpers(fixture)[3], 0.4 * factor, 2e-6);
+		for (int physical = 0; physical < 2; physical++) {
+#ifdef PT_PHYSICAL
+			params.physicalIor = physical ? 1.5f : 0;
+			params.physicalMetersPerUnit = 0.0254f;
+#else
+			if (physical) continue;
+#endif
+			for (int capture : {0, 1}) {
+				params.captureTargetFrames = capture;
+				PathTracingKernel<<<1, 1>>>(fixture.d_vertices, fixture.d_triangles, fixture.d_node, fixture.d_indices,
+					fixture.d_materials, fixture.d_textures, NULL, 0, device, params);
+				CUDA_CHECK(cudaGetLastError());
+				float result[4];
+				CUDA_CHECK(cudaMemcpy(result, device, sizeof(result), cudaMemcpyDeviceToHost));
+				for (int c = 0; c < 3; c++) {
+					CheckNear(label, result[c], material.emission[c] * 2 * factor, 2e-6);
+				}
+				TriangleDrawRayTracedKernel<<<1, 1>>>(fixture.d_vertices, fixture.d_triangles, fixture.d_node, fixture.d_indices,
+					fixture.d_materials, fixture.d_textures, NULL, 0, device, params);
+				CUDA_CHECK(cudaGetLastError());
+				CUDA_CHECK(cudaMemcpy(result, device, sizeof(result), cudaMemcpyDeviceToHost));
+				for (int c = 0; c < 3; c++) {
+					CheckNear(label, result[c], material.emission[c] * 2 * factor, 2e-6);
+				}
+			}
+		}
+	};
+	material.emissionTexture = 1;
+	material.texTransform[0] = material.texTransform[4] = 0;
+	material.texTransform[2] = 0.25f;
+	material.texTransform[5] = 0.5f;
+	material.emissionTransform[2] = 0.75f;
+	material.emissionTransform[5] = 0.5f;
+	check("glow transform independent of diffuse in every emission path", 1);
+	material.emissionTransform[2] = 0.25f;
+	check("animated glow transform and sRGB decoding", std::pow(128.0 / 255.0, 2.2));
+	material.emissionTexture = 0;
+	material.emissionUsesAlpha = 1;
+	material.emissionAlpha = 0;
+	check("faded glow is invisible and emits no light", 0);
+	material.emissionAlpha = 0.5f;
+	const double mask = 64.0 / 255.0;
+	check("SRC_ALPHA glow texture and stage alpha", mask * 0.5);
+	material.emissionUsesAlpha = 0;
+	material.emissionAlpha = 0;
+	check("ONE ONE glow ignores texture and stage alpha", 1);
+	material.emissionVertexColor = 1;
+	for (int i = 0; i < 3; i++) {
+		for (int c = 0; c < 4; c++) fixture.vertices[i].color[c] = 0.25f;
+	}
+	check("glow vertex RGB without source alpha weighting", std::pow(0.25, 2.2));
+	material.emissionVertexColor = 2;
+	check("glow inverse vertex RGB", std::pow(0.75, 2.2));
+	material.emissionUsesAlpha = 1;
+	material.emissionAlpha = 0.5f;
+	check("glow inverse vertex RGBA with source alpha weighting", std::pow(0.75, 2.2) * mask * 0.5 * 0.75);
+	material.emissionTexture = -1;
+	material.emissionVertexColor = 0;
+	material.emissionAlpha = 0.25f;
+	check("untextured glow alpha weighting", 0.25);
 	CUDA_CHECK(cudaFree(device));
 }
 
@@ -610,6 +769,7 @@ int main() {
 		return 77;
 	}
 	CUDA_CHECK(deviceError);
+	CheckEmissionStages();
 	CheckInverseDecals();
 	CheckWeaponAndFx();
 	const float rayOffset = 0.0001f;
@@ -626,16 +786,21 @@ int main() {
 	CheckNear("weighted light selection", Mean(Sample(fixture, 1.0f, 1.0f, true)), 2.0 * reference, 0.006);
 
 	ptMaterial_t& material = fixture.materials[0];
+	material.emissionUsesAlpha = 1;
+	material.emissionAlpha = 0;
+	CheckNear("faded glow emits no sampled light", Mean(Sample(fixture, 1.0f, 1.0f)), 0.0, 1e-8);
+	material.emissionUsesAlpha = 0;
+	material.emissionAlpha = 1;
 	material.emissionTexture = 1;
-	material.texTransform[0] = material.texTransform[4] = 0.0f;
-	material.texTransform[2] = 0.25f;
-	material.texTransform[5] = 0.5f;
+	material.emissionTransform[0] = material.emissionTransform[4] = 0.0f;
+	material.emissionTransform[2] = 0.25f;
+	material.emissionTransform[5] = 0.5f;
 	const double halfGray = std::pow(128.0 / 255.0, 2.2);
 	CheckNear("emission texture", Mean(Sample(fixture, 1.0f, 1.0f)), Mean(baseline) * halfGray, 1e-5);
-	material.texTransform[2] = 0.75f;
+	material.emissionTransform[2] = 0.75f;
 	CheckNear("emission texture transform", Mean(Sample(fixture, 1.0f, 1.0f)), Mean(baseline), 1e-5);
-	material.texTransform[0] = material.texTransform[4] = 1.0f;
-	material.texTransform[2] = material.texTransform[5] = 0.0f;
+	material.emissionTransform[0] = material.emissionTransform[4] = 1.0f;
+	material.emissionTransform[2] = material.emissionTransform[5] = 0.0f;
 	fixture.vertices[0].texcoord[0] = fixture.vertices[2].texcoord[0] = 0.25f;
 	fixture.vertices[1].texcoord[0] = 0.75f;
 	for (int i = 0; i < 3; i++) fixture.vertices[i].texcoord[1] = 0.5f;
@@ -648,6 +813,9 @@ int main() {
 	material.texTransform[2] = 0.25f;
 	CheckNear("texture alpha mask", Mean(Sample(fixture, 1.0f, 1.0f)), 0.0, 1e-8);
 	material.texTransform[2] = 0.75f;
+	material.emissionTransform[0] = material.emissionTransform[4] = 0.0f;
+	material.emissionTransform[2] = 0.75f;
+	material.emissionTransform[5] = 0.5f;
 	CheckNear("passing texture alpha", Mean(Sample(fixture, 1.0f, 1.0f)), Mean(baseline), 1e-5);
 	material.albedo[3] = 0.4f;
 	CheckNear("material alpha mask", Mean(Sample(fixture, 1.0f, 1.0f)), 0.0, 1e-8);
@@ -658,6 +826,9 @@ int main() {
 	material.useVertexColor = 1;
 	fixture.vertices[0].color[3] = 0.0f;
 	CheckNear("interpolated vertex alpha mask", Mean(Sample(fixture, 1.0f, 1.0f)), ReferenceIntegral(1.0, true), 0.002);
+	material.useVertexColor = 2;
+	CheckNear("inverse vertex alpha emitter mask", Mean(Sample(fixture, 1.0f, 1.0f)),
+		ReferenceIntegral(1.0) - ReferenceIntegral(1.0, true), 0.002);
 
 	material.useVertexColor = 0;
 	material.alphaTest = 0.0f;

@@ -110,7 +110,7 @@ typedef struct {
 
 typedef struct {
 	float normal[3];				// unperturbed surface normal for temporal validation
-	float depth;				// <= 0: bypass denoising
+	float depth;				// <= 0: no single surface suitable for demodulation
 	float position[3];			// world-space hit position for camera reprojection
 	int materialIndex;
 	float albedo[3];				// bounded modulation color
@@ -119,6 +119,7 @@ typedef struct {
 	float roughness;
 	float specularAlbedo[3];
 	int coverage;				// ptDenoiseCoverage_t
+	float volumeDepth;			// first visible layer, independent of surface eligibility
 } ptCudaDenoiseGuide_t;
 
 enum ptDenoiseCoverage_t {

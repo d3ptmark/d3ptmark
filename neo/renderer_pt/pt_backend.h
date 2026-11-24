@@ -9,6 +9,7 @@ class idPathTracerScene;
 
 typedef struct {
 	float		traceMs;			// GPU time of the last Render()
+	float		pathMs, denoiseMs, postprocessMs, toneMapMs;
 	int			numVertices;
 	int			numTriangles;
 	int			numBVHNodes;
@@ -17,6 +18,13 @@ typedef struct {
 	int			numTextures;
 	size_t		deviceBytes;		// approximate device memory owned by the backend
 } ptBackendStats_t;
+
+struct ptBackendDeviceInfo_t {
+	char name[256];
+	char pciBusId[32];			// device matching only, not exported
+	int driverVersion, runtimeVersion, multiprocessors, computeMajor, computeMinor;
+	size_t totalMemory;
+};
 
 /*
 ===============================================================================
@@ -85,6 +93,7 @@ typedef struct {
 
 #ifdef HAVE_CUDA
 bool						PT_CUDA_IsAvailable();
+bool						PT_CUDA_GetDeviceInfo( ptBackendDeviceInfo_t &info );
 idPathTracerBackend *		PT_CUDA_CreateBackend();
 #endif
 

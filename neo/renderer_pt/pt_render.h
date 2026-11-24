@@ -20,6 +20,8 @@ bool						RB_PT_IsSupported( void );
 int							RB_PT_GetCaptureTargetFrames( void );
 bool						RB_PT_IsCapturing( void );
 bool						RB_PT_SaveImage( const char *fileName, int format );
+int							RB_PT_GetCaptureBatch();
+void						RB_PT_CancelCaptures();
 
 // image pointers remain stable across reloadImages, so drop the PT readback cache
 void						RB_PT_InvalidateImages( void );

@@ -12,12 +12,25 @@ __device__ inline float PT_DenoiseNormalDot(const ptCudaDenoiseGuide_t &a, const
 }
 
 __device__ inline bool PT_DenoiseSupported(const ptCudaDenoiseGuide_t &guide, int signal) {
-	return guide.depth > 0.0f || (signal == 2 && guide.coverage == PT_DENOISE_MISS);
+	return guide.depth > 0.0f || (signal == 2 && (guide.volumeDepth > 0.0f || guide.coverage == PT_DENOISE_MISS));
+}
+
+__device__ inline float PT_DenoiseDepth(const ptCudaDenoiseGuide_t &guide, int signal) {
+	return signal == 2 && guide.volumeDepth > 0.0f ? guide.volumeDepth : guide.depth;
+}
+
+__device__ inline int PT_DenoiseVolumeLayer(const ptCudaDenoiseGuide_t &guide) {
+	if (guide.coverage == PT_DENOISE_TRANSPARENT) return 1;
+	if (guide.coverage == PT_DENOISE_OVERLAY) return 2;
+	if (guide.coverage == PT_DENOISE_MIXED && guide.depth <= 0.0f) return 3;
+	return 0;
 }
 
 __device__ inline bool PT_DenoiseSameSurface(const ptCudaDenoiseGuide_t &a, const ptCudaDenoiseGuide_t &b, int signal = 0) {
-	if (signal == 2 && a.depth <= 0.0f) return b.depth <= 0.0f && a.coverage == PT_DENOISE_MISS && b.coverage == PT_DENOISE_MISS;
-	return b.depth > 0.0f && fabsf(a.depth - b.depth) < fmaxf(0.01f, a.depth * 0.02f)
+	const float depthA = PT_DenoiseDepth(a, signal), depthB = PT_DenoiseDepth(b, signal);
+	if (signal == 2 && depthA <= 0.0f) return depthB <= 0.0f && a.coverage == PT_DENOISE_MISS && b.coverage == PT_DENOISE_MISS;
+	return depthB > 0.0f && fabsf(depthA - depthB) < fmaxf(0.01f, depthA * 0.02f)
+		&& (signal != 2 || PT_DenoiseVolumeLayer(a) == PT_DenoiseVolumeLayer(b))
 		&& (signal == 2 || PT_DenoiseNormalDot(a, b) > 0.9f);
 }
 
@@ -43,14 +56,19 @@ __global__ void SVGFCaptureGuidesKernel(
 	const int pixel = y * params.width + x;
 	ptCudaDenoiseGuide_t &guide = guides[pixel];
 	const ptCudaDenoiseGuide_t &old = previousGuides[pixel];
+	guide.volumeDepth = old.volumeDepth + (guide.volumeDepth - old.volumeDepth) / (params.frameIndex + 1.0f);
 	float planeDistance = 0.0f;
 	for (int c = 0; c < 3; c++) planeDistance += (guide.position[c] - old.position[c]) * old.normal[c];
-	if (guide.depth <= 0.0f || old.depth <= 0.0f || guide.materialIndex != old.materialIndex
+	if (guide.depth <= 0.0f || old.depth <= 0.0f
 		|| PT_DenoiseNormalDot(guide, old) < 0.9f || fabsf(planeDistance) > fmaxf(0.01f, old.depth * 0.002f)) {
 		if (guide.depth > 0.0f || old.depth > 0.0f || guide.coverage != old.coverage) guide.coverage = PT_DENOISE_MIXED;
 		guide.depth = 0.0f;
 		guide.historyValid = 0;
 		return;
+	}
+	if (guide.materialIndex != old.materialIndex || guide.coverage == PT_DENOISE_MIXED || old.coverage == PT_DENOISE_MIXED) {
+		guide.coverage = PT_DENOISE_MIXED;
+		guide.historyValid = 0;
 	}
 	const float alpha = 1.0f / (params.frameIndex + 1.0f);
 	for (int c = 0; c < 3; c++) {
@@ -206,7 +224,7 @@ __global__ void SVGFTemporalKernel(
 						bool sameAlbedo = true;
 						const float *reflectance = PT_DenoiseReflectance(guide, signal);
 						const float *oldReflectance = PT_DenoiseReflectance(oldGuide, signal);
-						for (int c = 0; c < 3; c++) {
+						for (int c = 0; c < 3 && signal != 2; c++) {
 							sameAlbedo &= fabsf(reflectance[c] - oldReflectance[c])
 								<= 0.02f + 0.2f * fmaxf(reflectance[c], oldReflectance[c]);
 						}
@@ -312,7 +330,7 @@ __global__ void SVGFAtrousKernel(
 			const float weight = (dx == 0 ? 2.0f : 1.0f) * (dy == 0 ? 2.0f : 1.0f);
 			variance += input[neighbor * 4 + 3] * weight;
 			varianceWeight += weight;
-			depthSlope = fmaxf(depthSlope, fabsf(guide.depth - guides[neighbor].depth));
+			depthSlope = fmaxf(depthSlope, fabsf(PT_DenoiseDepth(guide, signal) - PT_DenoiseDepth(guides[neighbor], signal)));
 		}
 	}
 	variance /= fmaxf(1.0f, varianceWeight);
@@ -328,7 +346,7 @@ __global__ void SVGFAtrousKernel(
 			const ptCudaDenoiseGuide_t &sampleGuide = guides[neighbor];
 			if (!PT_DenoiseSupported(sampleGuide, signal)) continue;
 			if (signal == 2 && !PT_DenoiseSameSurface(guide, sampleGuide, signal)) continue;
-			const float depthSigma = fmaxf(0.01f, guide.depth * 0.002f)
+			const float depthSigma = fmaxf(0.01f, PT_DenoiseDepth(guide, signal) * 0.002f)
 				+ depthSlope * step * sqrtf((float)(dx * dx + dy * dy));
 			const float colorDelta = fabsf(luminance - PT_DenoiseLuminance(input + neighbor * 4));
 			const float normalDot = fminf(1.0f, fmaxf(0.0f, PT_DenoiseNormalDot(guide, sampleGuide)));
@@ -340,7 +358,7 @@ __global__ void SVGFAtrousKernel(
 			const float roughnessWeight = signal != 1 ? 1.0f : expf(-20.0f * fabsf(guide.roughness - sampleGuide.roughness));
 			const float weight = (dx == 0 ? 2.0f : 1.0f) * (dy == 0 ? 2.0f : 1.0f)
 				* normalWeight * roughnessWeight
-				* expf(-fabsf(guide.depth - sampleGuide.depth) / depthSigma - colorDelta / colorSigma);
+				* expf(-fabsf(PT_DenoiseDepth(guide, signal) - PT_DenoiseDepth(sampleGuide, signal)) / depthSigma - colorDelta / colorSigma);
 			for (int c = 0; c < 3; c++) sum[c] += input[neighbor * 4 + c] * weight;
 			sumVariance += input[neighbor * 4 + 3] * weight * weight;
 			totalWeight += weight;

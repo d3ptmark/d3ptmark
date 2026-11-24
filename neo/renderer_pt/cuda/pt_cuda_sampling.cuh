@@ -70,23 +70,47 @@ __device__ void PT_SamplePhysicalBsdf(
 	const float* normal, const float* wo, const float* albedo, float metallic, float roughness,
 	float ior, ptRng_t* rng, float* direction, float& pdf
 ) {
+	if (dot3(normal, wo) <= 0.0f) {
+		pdf = 0.0f;
+		direction[0] = direction[1] = direction[2] = 0.0f;
+		return;
+	}
 	const float probability = PT_PhysicalSpecularProbability(albedo, metallic, ior);
 	if (PT_Rand(rng) >= probability) {
 		SampleHemisphere(normal, rng, direction, pdf);
 	} else {
-		const float r = PT_Rand(rng);
+		const float radius = sqrtf(PT_Rand(rng));
 		const float phi = 2.0f * PT_PI * PT_Rand(rng);
 		const float alpha = roughness * roughness;
-		const float cosine = sqrtf((1.0f - r) / (1.0f + (alpha * alpha - 1.0f) * r));
-		const float sine = sqrtf(fmaxf(0.0f, 1.0f - cosine * cosine));
 		float axis[3] = { 0.0f, 0.0f, 0.0f };
 		axis[fabsf(normal[0]) < 0.9f ? 0 : 1] = 1.0f;
 		float tangent[3], bitangent[3], h[3];
 		cross3(axis, normal, tangent);
 		normalize3(tangent);
 		cross3(normal, tangent, bitangent);
+
+		float view[3] = { alpha * dot3(wo, tangent), alpha * dot3(wo, bitangent), dot3(wo, normal) };
+		normalize3(view);
+		const float planarLength = view[0] * view[0] + view[1] * view[1];
+		const float invLength = planarLength > 0.0f ? rsqrtf(planarLength) : 0.0f;
+		const float diskTangent[3] = { planarLength > 0.0f ? -view[1] * invLength : 1.0f,
+			view[0] * invLength, 0.0f };
+		float diskBitangent[3];
+		cross3(view, diskTangent, diskBitangent);
+		const float x = radius * cosf(phi);
+		const float blend = 0.5f * (1.0f + view[2]);
+		const float y = (1.0f - blend) * sqrtf(fmaxf(0.0f, 1.0f - x * x)) + blend * radius * sinf(phi);
+		const float z = sqrtf(fmaxf(0.0f, 1.0f - x * x - y * y));
+		float localNormal[3];
 		for (int c = 0; c < 3; c++) {
-			h[c] = sine * cosf(phi) * tangent[c] + sine * sinf(phi) * bitangent[c] + cosine * normal[c];
+			localNormal[c] = x * diskTangent[c] + y * diskBitangent[c] + z * view[c];
+		}
+		localNormal[0] *= alpha;
+		localNormal[1] *= alpha;
+		localNormal[2] = fmaxf(localNormal[2], 0.0f);
+		normalize3(localNormal);
+		for (int c = 0; c < 3; c++) {
+			h[c] = localNormal[0] * tangent[c] + localNormal[1] * bitangent[c] + localNormal[2] * normal[c];
 		}
 		const float vh = dot3(wo, h);
 		if (vh <= 0.0f) {
@@ -710,28 +734,22 @@ __device__ void SampleDirectLight(
 		const ptVertex_t& v2 = vertices[tri.vertexIndices[2]];
 		float tu = bary[0] * v0.texcoord[0] + bary[1] * v1.texcoord[0] + bary[2] * v2.texcoord[0];
 		float tv = bary[0] * v0.texcoord[1] + bary[1] * v1.texcoord[1] + bary[2] * v2.texcoord[1];
-		PT_ApplyTexTransform(material, tu, tv);
-
 		if (material.alphaTest > 0.0f) {
-			float alpha = material.albedo[3];
+			float alphaU = tu, alphaV = tv;
+			PT_ApplyTexTransform(material, alphaU, alphaV);
+			float albedo[4] = { 1, 1, 1, material.albedo[3] };
 			if (material.albedoTexture >= 0 && textures) {
-				float albedo[4];
-				SampleTexture(textures, material.albedoTexture, tu, tv, albedo);
-				alpha *= albedo[3];
+				float texel[4];
+				SampleTexture(textures, material.albedoTexture, alphaU, alphaV, texel);
+				albedo[3] *= texel[3];
 			}
-			if (material.useVertexColor) {
-				alpha *= bary[0] * v0.color[3] + bary[1] * v1.color[3] + bary[2] * v2.color[3];
-			}
-			if (alpha < material.alphaTest) return;
+			PT_ApplyVertexColor(material, vertices, tri, bary[0], bary[1], bary[2], albedo);
+			if (albedo[3] < material.alphaTest) return;
 		}
 
-		float glow[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-		if (material.emissionTexture >= 0 && textures) {
-			SampleTextureSrgb(textures, material.emissionTexture, tu, tv, glow);
-		}
-		for (int c = 0; c < 3; c++) {
-			lightColor[c] = material.emission[c] * glow[c] * emissionBoost;
-		}
+		PT_SampleEmission(material, textures, vertices, tri, bary[0], bary[1], bary[2], tu, tv, lightColor);
+		if (lightColor[0] <= 0.0f && lightColor[1] <= 0.0f && lightColor[2] <= 0.0f) return;
+		for (int c = 0; c < 3; c++) lightColor[c] *= emissionBoost;
 		contribution = ndotl * emitterCosine * light.area[0] / (distance * distance);
 	} else {
 		const float attenuation = PT_LightFilter(light, position, distance, wi, textures, lightColor, params);
@@ -919,13 +937,11 @@ __device__ void SampleIndirectLight(
 
 	// skip emitters the caller's light sampling already covered
 	if (!(hitInfo.triFlags & PT_TRI_AREA_LIGHT) || !callerSampledLights) {
-		float glow[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-		if (material.emissionTexture >= 0 && textures) {
-			SampleTextureSrgb(textures, material.emissionTexture, tu, tv, glow);
-		}
-		radiance[0] += material.emission[0] * glow[0] * emissionBoost;
-		radiance[1] += material.emission[1] * glow[1] * emissionBoost;
-		radiance[2] += material.emission[2] * glow[2] * emissionBoost;
+		float emission[3];
+		PT_SampleEmission(material, textures, vertices, triangles[hitInfo.triangleIndex],
+			hitInfo.barycentrics[0], hitInfo.barycentrics[1], hitInfo.barycentrics[2],
+			hitInfo.texcoord[0], hitInfo.texcoord[1], emission);
+		for (int c = 0; c < 3; c++) radiance[c] += emission[c] * emissionBoost;
 	}
 
 	int pick;

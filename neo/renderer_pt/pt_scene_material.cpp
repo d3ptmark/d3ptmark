@@ -31,6 +31,11 @@ static void PT_InitMaterial( ptMaterial_t &mat ) {
     mat.normalTexture = -1;
     mat.specularTexture = -1;
     mat.emissionTexture = -1;
+    mat.emissionAlpha = 1.0f;
+    mat.emissionTransform[0] = mat.emissionTransform[4] = 1.0f;
+    mat.additiveMaskTexture = -1;
+    mat.additiveMaskAlpha = 1.0f;
+    mat.additiveMaskTransform[0] = mat.additiveMaskTransform[4] = 1.0f;
     mat.blendMode = PT_BLEND_OPAQUE;
     mat.bumpScale = 1.0f;
     mat.texTransform[0] = 1.0f;
@@ -141,7 +146,9 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
     // extract textures
     const shaderStage_t *ambientBaseStage = NULL;   // first non-additive ambient stage
     const shaderStage_t *ambientGlowStage = NULL;   // first additive ambient stage
-    const shaderStage_t *ambientMaskStage = NULL;   // first maskcolor ambient stage (alpha-only write)
+    const shaderStage_t *ambientMaskStage = NULL;
+    const shaderStage_t *ambientBaseMaskStage = NULL;
+    const shaderStage_t *ambientGlowMaskStage = NULL;
     const shaderStage_t *diffuseStage = NULL;
     const shaderStage_t *normalStage = NULL;
     const shaderStage_t *specularStage = NULL;
@@ -153,6 +160,12 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
 		if (!stage) continue;
         if ( SAFE_REG( stage->conditionRegister ) == 0 ) continue;
         hasActiveStage = true;
+        const int blendBits = stage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS);
+        const shaderStage_t *precedingMaskStage = ambientMaskStage;
+        const bool writesAmbientAlpha = stage->lighting == SL_AMBIENT
+            && !(stage->drawStateBits & GLS_ALPHAMASK)
+            && blendBits != (GLS_SRCBLEND_ZERO | GLS_DSTBLEND_ONE);
+        if (writesAmbientAlpha) ambientMaskStage = NULL;
 
         // skip fragment program stages
         if (stage->newStage) {
@@ -173,7 +186,6 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
         switch (stage->lighting) {
             case SL_AMBIENT:
             {
-                int blendBits = stage->drawStateBits & (GLS_SRCBLEND_BITS | GLS_DSTBLEND_BITS);
 				if (blendBits == (GLS_SRCBLEND_ZERO | GLS_DSTBLEND_ONE)) {
 					break;
 				}
@@ -181,7 +193,9 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
                 // maskcolor stages only write alpha
                 bool isMaskColor = ((stage->drawStateBits & GLS_COLORMASK) == GLS_COLORMASK);
                 if (isMaskColor) {
-                    if (!ambientMaskStage) ambientMaskStage = stage;
+                    if (writesAmbientAlpha && blendBits == (GLS_SRCBLEND_ONE | GLS_DSTBLEND_ZERO)) {
+                        ambientMaskStage = stage;
+                    }
                     if (r_ptDebug.GetBool()) {
                         common->Printf("  stage %d: maskcolor (alpha mask)\n", i);
                     }
@@ -191,9 +205,15 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
                 bool stageIsAdd = (blendBits == (GLS_SRCBLEND_ONE | GLS_DSTBLEND_ONE))
                     || (blendBits == (GLS_SRCBLEND_SRC_ALPHA | GLS_DSTBLEND_ONE));
                 if (stageIsAdd) {
-                    if (!ambientGlowStage) ambientGlowStage = stage;
+                    if (!ambientGlowStage) {
+                        ambientGlowStage = stage;
+                        ambientGlowMaskStage = precedingMaskStage;
+                    }
                 } else {
-                    if (!ambientBaseStage) ambientBaseStage = stage;
+                    if (!ambientBaseStage) {
+                        ambientBaseStage = stage;
+                        ambientBaseMaskStage = precedingMaskStage;
+                    }
                 }
                 break;
             }
@@ -309,6 +329,17 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
             mat.emission[0] = emR;
             mat.emission[1] = emG;
             mat.emission[2] = emB;
+            mat.emissionUsesAlpha = (ambientGlowStage->drawStateBits & GLS_SRCBLEND_BITS) == GLS_SRCBLEND_SRC_ALPHA;
+            mat.emissionAlpha = SAFE_REG(ambientGlowStage->color.registers[3]);
+            mat.emissionVertexColor = ambientGlowStage->vertexColor == SVC_MODULATE ? 1
+                : ambientGlowStage->vertexColor == SVC_INVERSE_MODULATE ? 2 : 0;
+            if (ambientGlowStage->texture.hasMatrix && regs) {
+                for (int row = 0; row < 2; row++) {
+                    for (int col = 0; col < 3; col++) {
+                        mat.emissionTransform[row * 3 + col] = SAFE_REG(ambientGlowStage->texture.matrix[row][col]);
+                    }
+                }
+            }
             emission.Set(mat.emission[0], mat.emission[1], mat.emission[2]);
         }
     }
@@ -431,7 +462,30 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
     if ( albedoTextureStage ) {
         mat.useVertexColor = albedoTextureStage->vertexColor == SVC_MODULATE ? 1
             : albedoTextureStage->vertexColor == SVC_INVERSE_MODULATE ? 2 : 0;
-        mat.additiveUsesAlpha = ( albedoTextureStage->drawStateBits & GLS_SRCBLEND_BITS ) == GLS_SRCBLEND_SRC_ALPHA;
+        const int srcBlend = albedoTextureStage->drawStateBits & GLS_SRCBLEND_BITS;
+        mat.additiveUsesAlpha = srcBlend == GLS_SRCBLEND_SRC_ALPHA
+            ? PT_ADDITIVE_SOURCE_ALPHA : PT_ADDITIVE_ONE;
+        if (mat.blendMode == PT_BLEND_ADD && srcBlend == GLS_SRCBLEND_DST_ALPHA) {
+            const shaderStage_t *maskStage = albedoTextureStage == ambientBaseStage ? ambientBaseMaskStage
+                : albedoTextureStage == ambientGlowStage ? ambientGlowMaskStage : NULL;
+            mat.additiveUsesAlpha = PT_ADDITIVE_LOCAL_MASK;
+            if (maskStage) mat.additiveMaskTexture = AddTexture(maskStage->texture.image);
+            if (!maskStage || mat.additiveMaskTexture < 0) {
+                common->Warning("PT material '%s': DST_ALPHA additive stage has no supported resident local alpha mask; overlay omitted",
+                    material->GetName());
+            } else {
+                mat.additiveMaskAlpha = SAFE_REG(maskStage->color.registers[3]);
+                mat.additiveMaskVertexColor = maskStage->vertexColor == SVC_MODULATE ? 1
+                    : maskStage->vertexColor == SVC_INVERSE_MODULATE ? 2 : 0;
+                if (maskStage->texture.hasMatrix && regs) {
+                    for (int row = 0; row < 2; row++) {
+                        for (int col = 0; col < 3; col++) {
+                            mat.additiveMaskTransform[row * 3 + col] = SAFE_REG(maskStage->texture.matrix[row][col]);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // colors are multiplied in gamma space by the GL renderer, decode every
@@ -441,6 +495,9 @@ void idPathTracerScene::BuildMaterial( ptMaterial_t &mat, idVec3 &emission, cons
         mat.emission[c] = PT_SrgbToLinear( mat.emission[c] );
     }
     emission.Set( mat.emission[0], mat.emission[1], mat.emission[2] );
+    if (mat.emissionUsesAlpha) {
+        emission *= idMath::ClampFloat(0.0f, 1.0f, mat.emissionAlpha);
+    }
 
 #ifdef PT_PHYSICAL
     idStr effectName = material->GetName();
