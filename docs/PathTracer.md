@@ -1,9 +1,11 @@
 # DOOM3 GPU PATH TRACING RENDERER
 
 d3ptmark adds a **GPU path tracer** (`neo/renderer_pt/`) that can replace the
-classic OpenGL rasterizer for 3D views. The front end is compute-API agnostic; the only
-backend implemented today is **CUDA** (`neo/renderer_pt/cuda/`). It is compiled into the
-`d3ptmark-pt` binary only; `d3ptmark-le` contains the stock OpenGL renderer.
+classic OpenGL rasterizer for 3D views. The front end is compute-API agnostic, with two
+backends: **CUDA** (`neo/renderer_pt/cuda/`) and **OpenCL** (`neo/renderer_pt/opencl/`), a
+port of the CUDA kernels to OpenCL 1.2 for AMD, Intel and NVIDIA GPUs. Every backend whose
+toolchain is found is compiled into the `d3ptmark-pt` binary; `d3ptmark-le` contains the stock
+OpenGL renderer.
 
 ## Overview
 
@@ -24,8 +26,9 @@ and all GUI drawing on top of the 3D view.
 | `renderer_pt/pt_render.h/.cpp` | Front end: cvars, backend registry / lifecycle, accumulation control, viewport blit (`RB_PT_*`) |
 | `renderer_pt/pt_commands.cpp` | `r_ptCompare`, `r_ptSequence`, `r_ptAbort` capture tools |
 | `renderer_pt/cuda/` | CUDA backend (`idPathTracerBackendCUDA`), kernels and the GPU LBVH builder |
+| `renderer_pt/opencl/` | OpenCL backend (`idPathTracerBackendOpenCL`): `pt_cl_*.cl` ports of every CUDA kernel file, the launch layer (`pt_opencl_kernels.cpp`) and a runtime loader for the OpenCL ICD |
 
-## Adding a Backend (e.g. OpenCL)
+## Adding a Backend
 
 1. Implement `idPathTracerBackend` (see `pt_backend.h`) in `neo/renderer_pt/<api>/`.
    The contract:
@@ -34,8 +37,8 @@ and all GUI drawing on top of the 3D view.
    - `Render` accumulates samples into a float buffer until `ResetAccumulation()` is called, then tone maps it to RGBA8. Only `PT_MODE_PATHTRACE` accumulates; debug modes overwrite.
    - Report unrecoverable device errors through `IsHealthy()`, and the front end falls back to OpenGL.
    - All data types in `pt_types.h` are plain structs with no API-specific members, so they can be copied to the device as-is.
-2. Export `PT_<API>_IsAvailable()` and `PT_<API>_CreateBackend()`, and add them to `ptBackendFactories[]` in `pt_render.cpp`.
-3. In `neo/CMakeLists.txt`, add a detection block that defines `HAVE_<API>` for the `d3ptmark-pt` target. Append your host sources to `src_pt_host` and any device sources to `src_pt_cuda`.
+2. Export `PT_<API>_IsAvailable()`, `PT_<API>_CreateBackend()` and `PT_<API>_GetDeviceInfo()` (used by capture reports), and add them to `ptBackendFactories[]` in `pt_render.cpp`.
+3. In `neo/CMakeLists.txt`, add a detection block that sets `PT_HAVE_<API>`, a `src_pt_<api>` source list, and the `HAVE_<API>` define for the `d3ptmark-pt` target in `add_engine_binary()` (see the CUDA and OpenCL blocks).
 4. Select it with `r_ptBackend <name>`. `auto` picks the first available backend.
 
 ## Rendering Modes (`r_ptMode`)
@@ -211,12 +214,43 @@ compiler is preferred.
 With `-DPATHTRACED=OFF` only `d3ptmark-le` is built, which runs as plain dhewm3 with no
 path tracer code compiled in.
 
+## Building with OpenCL
+
+The OpenCL backend is enabled by default (`-DOPENCL=OFF` disables it) and needs only the
+OpenCL headers (`CL/cl.h`, for example the `opencl-headers` package or a GPU vendor SDK).
+The executable does not link against OpenCL: the ICD loader (`OpenCL.dll`, `libOpenCL.so.1`)
+is loaded when the backend starts, so `d3ptmark-pt` still runs on machines without an OpenCL
+driver and falls back to OpenGL. Without the CUDA toolkit, `d3ptmark-pt` is built with the
+OpenCL backend only; configuration fails only when neither backend is available.
+
+The device needs OpenCL 1.2 and an online compiler. The kernels are embedded in the
+executable and compiled for the selected device on first use, which can take tens of seconds.
+The device binary is cached in `<fs_savepath>/<game>/ptcache/` (disable with
+`r_ptOpenCLCache 0`). `r_ptBackend opencl` selects the backend explicitly; with `auto`, CUDA is
+preferred when both are available. With the OpenCL backend active, `r_ptInfo` lists every
+OpenCL platform and device and marks the one in use.
+
+The OpenCL kernels follow the CUDA ones file for file (same algorithms, constants, RNG
+streams, launch order and buffer layout). Deliberate differences:
+
+- Textures live in one texel pool addressed through a descriptor table, because OpenCL 1.2
+  buffers cannot contain pointers.
+- The LBVH sorts Morton codes with its own stable radix sort instead of CUB. The permutation
+  is identical (checked against `std::stable_sort` by `pt_opencl_lbvh_test`).
+- The camera half-angle uses `tanpi()`. Some OpenCL drivers return `tan(pi/4)` one ulp high,
+  which shifts every SVGF reprojection off the pixel grid.
+- Intel devices compile with `-cl-intel-256-GRF-per-thread`, because the register-spilling
+  default faulted intermittently on the path tracing kernel.
+
 Configuring with `-DTESTS=ON` builds the path tracer regression tests; run them with
 `ctest --output-on-failure` from the build directory. The capture report, benchmark,
 material cache and quality preset tests are pure CPU tests. The GPU tests
 (`pt_cuda_lighting_test`, `pt_cuda_denoising_test`, `pt_cuda_postprocess_test`,
 `pt_cuda_physical_test`, built only when `PATHTRACED` is enabled) skip at runtime if no
-CUDA device or driver is available.
+CUDA device or driver is available. Their OpenCL ports (`pt_opencl_lighting_test`,
+`pt_opencl_denoising_test`, `pt_opencl_postprocess_test`, `pt_opencl_physical_test`) and
+`pt_opencl_lbvh_test` are built when the OpenCL backend is, and skip when there is no OpenCL
+GPU; `PT_OPENCL_TEST_PLATFORM` / `PT_OPENCL_TEST_DEVICE` select a device by index.
 
 The denoising test checks diffuse/specular noise reduction, temporal reuse and roughness-dependent bounded history, camera reprojection,
 disocclusion/lighting-change rejection, texture restoration, edge preservation, small/odd
@@ -796,7 +830,10 @@ still need actual lights or emissive geometry to receive illumination.
 | CVar | Default | Description |
 |------|---------|-------------|
 | `r_ptDraw` | `1` | Draw 3D views with the path tracer (0 = OpenGL) |
-| `r_ptBackend` | `auto` | Compute backend: `auto`, `cuda` |
+| `r_ptBackend` | `auto` | Compute backend: `auto`, `cuda`, `opencl` |
+| `r_ptOpenCLPlatform` | `-1` | OpenCL platform index, `-1` picks the best GPU (applies when the backend starts) |
+| `r_ptOpenCLDevice` | `-1` | OpenCL device index within the platform, `-1` picks the best GPU |
+| `r_ptOpenCLCache` | `1` | Cache compiled OpenCL programs in `<fs_savepath>/<game>/ptcache/` |
 | `r_ptMode` | `0` | Render mode, see above |
 | `r_ptDebug` | `0` | Print per-frame scene / timing info |
 | `r_ptPreset` | `med` | Gameplay or cinematic tiers: `gameplay_low/med/high/ultra/custom`, `cinematic_low/med/high/ultra/custom`; legacy `low/med/high/ultra/custom` retained |

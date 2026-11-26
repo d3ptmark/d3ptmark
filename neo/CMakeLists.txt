@@ -4,12 +4,13 @@ project(d3ptmark C CXX)
 # d3ptmark - Doom 3 Path-Tracer Benchmark (based on dhewm3).
 # Builds two engine binaries from the same source tree:
 #   d3ptmark-le - legacy OpenGL renderer
-#   d3ptmark-pt - CUDA path tracer (compiled with -DPT_PATHTRACED)
+#   d3ptmark-pt - GPU path tracer (compiled with -DPT_PATHTRACED), CUDA and/or OpenCL backends
 # plus the game libraries (base, d3xp) shared by both binaries.
 # Supported platforms: Linux (GCC/Clang/MinGW) and Windows (MSVC).
 
 option(LEGACY     "Build the legacy renderer binary (d3ptmark-le)" ON)
-option(PATHTRACED "Build the path-traced binary (d3ptmark-pt), requires the NVIDIA CUDA toolkit" ON)
+option(PATHTRACED "Build the path-traced binary (d3ptmark-pt), requires the NVIDIA CUDA toolkit and/or the OpenCL headers" ON)
+option(OPENCL     "Add the OpenCL 1.2 backend to d3ptmark-pt (needs only the OpenCL headers, the runtime is loaded on demand)" ON)
 option(TESTS      "Build the path tracer regression tests (run with ctest)" OFF)
 
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/sys/cmake")
@@ -56,20 +57,44 @@ else()
 	set(curl_lib "")
 endif()
 
+set(PT_HAVE_CUDA OFF)
+set(PT_HAVE_OPENCL OFF)
 if(PATHTRACED)
+	# OpenCL backend: only the headers are needed at build time, the ICD loader
+	# (OpenCL.dll / libOpenCL.so.1) is loaded when the backend starts
+	if(OPENCL)
+		find_package(OpenCL QUIET)
+		if(OpenCL_INCLUDE_DIRS)
+			set(PT_OPENCL_INCLUDE_DIR ${OpenCL_INCLUDE_DIRS})
+		else()
+			find_path(PT_OPENCL_INCLUDE_DIR NAMES CL/cl.h
+				HINTS ENV OCL_ROOT ENV CUDA_PATH ENV INTELOCLSDKROOT ENV AMDAPPSDKROOT PATH_SUFFIXES include)
+		endif()
+		if(PT_OPENCL_INCLUDE_DIR)
+			set(PT_HAVE_OPENCL ON)
+			message(STATUS "OpenCL path tracer enabled - headers: ${PT_OPENCL_INCLUDE_DIR}")
+		else()
+			message(WARNING "OpenCL headers (CL/cl.h) not found, d3ptmark-pt is built without the OpenCL backend")
+		endif()
+	endif()
+
 	include(CheckLanguage)
 	check_language(CUDA)
-	if(NOT CMAKE_CUDA_COMPILER)
-		message(FATAL_ERROR "d3ptmark-pt requires the NVIDIA CUDA toolkit - install it or configure with -DPATHTRACED=OFF")
+	if(CMAKE_CUDA_COMPILER)
+		set(PT_HAVE_CUDA ON)
+		enable_language(CUDA)
+		set(CMAKE_CUDA_STANDARD 17)
+		if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
+			set(CMAKE_CUDA_ARCHITECTURES "75;80;86;89;90") # Turing..Hopper
+		endif()
+		# optional NVML for GPU clock/power info in capture reports
+		find_path(PT_NVML_INCLUDE_DIR nvml.h HINTS ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES} /usr/local/cuda/include)
+		message(STATUS "CUDA path tracer enabled - compiler: ${CMAKE_CUDA_COMPILER}, architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+	elseif(PT_HAVE_OPENCL)
+		message(STATUS "NVIDIA CUDA toolkit not found, d3ptmark-pt is built with the OpenCL backend only")
+	else()
+		message(FATAL_ERROR "d3ptmark-pt needs the NVIDIA CUDA toolkit or the OpenCL headers - install one or configure with -DPATHTRACED=OFF")
 	endif()
-	enable_language(CUDA)
-	set(CMAKE_CUDA_STANDARD 17)
-	if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
-		set(CMAKE_CUDA_ARCHITECTURES "75;80;86;89;90") # Turing..Hopper
-	endif()
-	# optional NVML for GPU clock/power info in capture reports
-	find_path(PT_NVML_INCLUDE_DIR nvml.h HINTS ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES} /usr/local/cuda/include)
-	message(STATUS "CUDA path tracer enabled - compiler: ${CMAKE_CUDA_COMPILER}, architectures: ${CMAKE_CUDA_ARCHITECTURES}")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -301,14 +326,56 @@ set(src_pt_host
 	renderer_pt/pt_scene_material.cpp
 	renderer_pt/pt_physical.cpp
 	renderer_pt/pt_material_editor.cpp
-	renderer_pt/cuda/pt_backend_cuda.cpp
 )
 
-# path tracer device sources (CUDA kernels + GPU LBVH builder)
+# CUDA backend: host side + device sources (kernels + GPU LBVH builder)
 set(src_pt_cuda
+	renderer_pt/cuda/pt_backend_cuda.cpp
 	renderer_pt/cuda/pt_cuda_kernels.cu
 	renderer_pt/cuda/pt_cuda_lbvh.cu
 )
+
+# OpenCL backend. The OpenCL C program (pt_types.h, pt_opencl_shared.h and the
+# pt_cl_*.cl files in dependency order) is embedded into the executable.
+set(src_pt_opencl_program
+	renderer_pt/pt_types.h
+	renderer_pt/opencl/pt_opencl_shared.h
+	renderer_pt/opencl/pt_cl_math.cl
+	renderer_pt/opencl/pt_cl_physical.cl
+	renderer_pt/opencl/pt_cl_material.cl
+	renderer_pt/opencl/pt_cl_triangles.cl
+	renderer_pt/opencl/pt_cl_intersect.cl
+	renderer_pt/opencl/pt_cl_sampling.cl
+	renderer_pt/opencl/pt_cl_pathtracing.cl
+	renderer_pt/opencl/pt_cl_denoising.cl
+	renderer_pt/opencl/pt_cl_postprocess.cl
+	renderer_pt/opencl/pt_cl_lbvh.cl
+)
+set(src_pt_opencl_launch "")
+set(src_pt_opencl "")
+if(PT_HAVE_OPENCL)
+	set(pt_opencl_header "${CMAKE_BINARY_DIR}/pt_opencl_program.h")
+	set(pt_opencl_inputs "")
+	foreach(pt_opencl_file ${src_pt_opencl_program})
+		list(APPEND pt_opencl_inputs "${CMAKE_SOURCE_DIR}/${pt_opencl_file}")
+	endforeach()
+	string(REPLACE ";" "|" pt_opencl_inputs_arg "${pt_opencl_inputs}")
+	add_custom_command(
+		OUTPUT "${pt_opencl_header}"
+		COMMAND ${CMAKE_COMMAND} "-DOUTPUT=${pt_opencl_header}" "-DINPUTS=${pt_opencl_inputs_arg}"
+			-P "${CMAKE_SOURCE_DIR}/renderer_pt/opencl/pt_opencl_embed.cmake"
+		DEPENDS ${pt_opencl_inputs} "${CMAKE_SOURCE_DIR}/renderer_pt/opencl/pt_opencl_embed.cmake"
+		COMMENT "Embedding OpenCL path tracer program"
+		VERBATIM
+	)
+	# launch layer without idlib dependencies, shared with the OpenCL regression tests
+	set(src_pt_opencl_launch
+		renderer_pt/opencl/pt_opencl_kernels.cpp
+		renderer_pt/opencl/pt_opencl_loader.cpp
+		"${pt_opencl_header}"
+	)
+	set(src_pt_opencl renderer_pt/opencl/pt_backend_opencl.cpp ${src_pt_opencl_launch})
+endif()
 
 set(src_framework
 	framework/CVarSystem.cpp
@@ -643,11 +710,18 @@ set(src_d3xp
 add_library(idlib STATIC ${src_idlib})
 set_property(TARGET idlib PROPERTY POSITION_INDEPENDENT_CODE ON) # linked into the game .so/.dll
 
-# engine executable; pathtraced=TRUE additionally compiles the CUDA path tracer
+# engine executable; pathtraced=TRUE additionally compiles the path tracer
+# with every available backend (CUDA and/or OpenCL)
 function(add_engine_binary name pathtraced)
 	set(src ${src_engine})
 	if(pathtraced)
-		list(APPEND src ${src_pt_host} ${src_pt_cuda})
+		list(APPEND src ${src_pt_host})
+		if(PT_HAVE_CUDA)
+			list(APPEND src ${src_pt_cuda})
+		endif()
+		if(PT_HAVE_OPENCL)
+			list(APPEND src ${src_pt_opencl})
+		endif()
 	endif()
 
 	add_executable(${name} WIN32 ${src})
@@ -657,9 +731,18 @@ function(add_engine_binary name pathtraced)
 	target_link_libraries(${name} idlib ${OPENAL_LIBRARY} ${curl_lib} ${SDL2_LIBRARY} ${sys_libs})
 
 	if(pathtraced)
-		target_compile_definitions(${name} PRIVATE PT_PATHTRACED HAVE_PATHTRACER HAVE_CUDA PT_PHYSICAL)
-		set_target_properties(${name} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-		target_include_directories(${name} PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+		target_compile_definitions(${name} PRIVATE PT_PATHTRACED HAVE_PATHTRACER PT_PHYSICAL)
+		if(PT_HAVE_CUDA)
+			target_compile_definitions(${name} PRIVATE HAVE_CUDA)
+			set_target_properties(${name} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+			target_include_directories(${name} PRIVATE ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+		endif()
+		if(PT_HAVE_OPENCL)
+			target_compile_definitions(${name} PRIVATE HAVE_OPENCL CL_TARGET_OPENCL_VERSION=120)
+			target_include_directories(${name} PRIVATE ${PT_OPENCL_INCLUDE_DIR})
+			target_link_libraries(${name} ${CMAKE_DL_LIBS})
+		endif()
+		# NVML telemetry also works for NVIDIA GPUs driven through OpenCL (PCI bus id match)
 		if(PT_NVML_INCLUDE_DIR)
 			target_include_directories(${name} PRIVATE ${PT_NVML_INCLUDE_DIR})
 			target_compile_definitions(${name} PRIVATE HAVE_NVML_CAPTURE)
@@ -698,7 +781,13 @@ if(TESTS)
 
 	set(pt_test_defines "")
 	if(PATHTRACED)
-		set(pt_test_defines PT_PATHTRACED HAVE_PATHTRACER HAVE_CUDA PT_PHYSICAL)
+		set(pt_test_defines PT_PATHTRACED HAVE_PATHTRACER PT_PHYSICAL)
+		if(PT_HAVE_CUDA)
+			list(APPEND pt_test_defines HAVE_CUDA)
+		endif()
+		if(PT_HAVE_OPENCL)
+			list(APPEND pt_test_defines HAVE_OPENCL)
+		endif()
 	endif()
 
 	function(pt_cpu_test name)
@@ -716,6 +805,16 @@ if(TESTS)
 		set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
 	endfunction()
 
+	# OpenCL tests skip (exit code 77) when no OpenCL runtime/GPU is available
+	function(pt_opencl_test name)
+		add_executable(${name} renderer_pt/tests/${name}.cpp ${src_pt_opencl_launch})
+		target_compile_definitions(${name} PRIVATE ${pt_test_defines} CL_TARGET_OPENCL_VERSION=120)
+		target_include_directories(${name} PRIVATE ${PT_OPENCL_INCLUDE_DIR})
+		target_link_libraries(${name} ${CMAKE_DL_LIBS})
+		add_test(NAME ${name} COMMAND ${name})
+		set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
+	endfunction()
+
 	pt_cpu_test(pt_capture_report_test)
 	pt_cpu_test(pt_benchmark_test)
 	pt_cpu_test(pt_material_cache_test)
@@ -723,9 +822,18 @@ if(TESTS)
 
 	if(PATHTRACED)
 		pt_cpu_test(pt_material_editor_test)
+	endif()
+	if(PT_HAVE_CUDA)
 		pt_cuda_test(pt_cuda_lighting_test)
 		pt_cuda_test(pt_cuda_denoising_test renderer_pt/cuda/pt_cuda_kernels.cu)
 		pt_cuda_test(pt_cuda_postprocess_test)
 		pt_cuda_test(pt_cuda_physical_test)
+	endif()
+	if(PT_HAVE_OPENCL)
+		pt_opencl_test(pt_opencl_lighting_test)
+		pt_opencl_test(pt_opencl_denoising_test)
+		pt_opencl_test(pt_opencl_postprocess_test)
+		pt_opencl_test(pt_opencl_physical_test)
+		pt_opencl_test(pt_opencl_lbvh_test)
 	endif()
 endif()

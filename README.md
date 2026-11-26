@@ -12,7 +12,7 @@ One build produces two binaries from the same source tree:
 | Binary | Renderer |
 |--------|----------|
 | `d3ptmark-le` | **l**egacy OpenGL rasterizer (stock dhewm3 rendering) |
-| `d3ptmark-pt` | CUDA **p**ath **t**racer (compiled with `-DPT_PATHTRACED`) |
+| `d3ptmark-pt` | GPU **p**ath **t**racer (compiled with `-DPT_PATHTRACED`), CUDA and/or OpenCL backend |
 
 Both binaries share the same game libraries (`base`, `d3xp`) and the same game data,
 so like-for-like comparisons only swap the executable.
@@ -23,7 +23,9 @@ so like-for-like comparisons only swap the executable.
   1.3.1) — not included
 - Linux (GCC/Clang) or Windows (Visual Studio)
 - CMake ≥ 3.18, SDL2, OpenAL, optionally libcurl
-- For `d3ptmark-pt`: the NVIDIA CUDA toolkit and an NVIDIA GPU (Turing / SM 75 or newer)
+- For `d3ptmark-pt`, at least one of:
+  - the NVIDIA CUDA toolkit and an NVIDIA GPU (Turing / SM 75 or newer) for the CUDA backend
+  - the OpenCL headers (`CL/cl.h`) and an OpenCL 1.2 GPU (AMD, Intel or NVIDIA) for the OpenCL backend
 
 ## Building
 
@@ -49,7 +51,8 @@ arguments are passed to CMake:
 
 | Option | Default | Effect |
 |--------|---------|--------|
-| `-DPATHTRACED=OFF` | `ON` | skip `d3ptmark-pt` (no CUDA toolkit required) |
+| `-DPATHTRACED=OFF` | `ON` | skip `d3ptmark-pt` (no CUDA toolkit or OpenCL headers required) |
+| `-DOPENCL=OFF` | `ON` | build `d3ptmark-pt` without the OpenCL backend |
 | `-DLEGACY=OFF` | `ON` | skip `d3ptmark-le` |
 | `-DTESTS=ON` | `OFF` | build the path tracer regression tests (`ctest`) |
 | `-DCMAKE_CUDA_ARCHITECTURES=75` | `75;80;86;89;90` | build kernels for one GPU generation only (faster build) |
@@ -61,7 +64,7 @@ If your host compiler is newer than your CUDA toolkit supports, configure with t
 CUDAFLAGS="-allow-unsupported-compiler -std=c++17" ./build.sh
 ```
 
-See [docs/PathTracer.md](./docs/PathTracer.md) for more CUDA build details.
+See [docs/PathTracer.md](./docs/PathTracer.md) for more CUDA and OpenCL build details.
 
 ## Running
 
