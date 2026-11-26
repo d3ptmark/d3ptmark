@@ -24,6 +24,9 @@ struct ptBackendDeviceInfo_t {
 	char pciBusId[32];			// device matching only, not exported
 	int driverVersion, runtimeVersion, multiprocessors, computeMajor, computeMinor;
 	size_t totalMemory;
+	char api[16];				// "opencl"; empty for CUDA, whose report format predates this field
+	char driverString[128];		// OpenCL: CL_DRIVER_VERSION
+	char apiVersion[128];		// OpenCL: CL_DEVICE_VERSION
 };
 
 /*
@@ -89,6 +92,7 @@ typedef struct {
 	const char *			name;
 	bool					( *isAvailable )();
 	idPathTracerBackend *	( *create )();
+	bool					( *getDeviceInfo )( ptBackendDeviceInfo_t &info );
 } ptBackendFactory_t;
 
 #ifdef HAVE_CUDA
@@ -96,5 +100,14 @@ bool						PT_CUDA_IsAvailable();
 bool						PT_CUDA_GetDeviceInfo( ptBackendDeviceInfo_t &info );
 idPathTracerBackend *		PT_CUDA_CreateBackend();
 #endif
+
+#ifdef HAVE_OPENCL
+bool						PT_OpenCL_IsAvailable();
+bool						PT_OpenCL_GetDeviceInfo( ptBackendDeviceInfo_t &info );
+idPathTracerBackend *		PT_OpenCL_CreateBackend();
+#endif
+
+// device of the active backend, or of the one r_ptBackend would create
+bool						R_PT_GetDeviceInfo( ptBackendDeviceInfo_t &info );
 
 #endif /* !__PT_BACKEND_H__ */

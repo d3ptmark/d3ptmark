@@ -155,7 +155,16 @@ static bool Metadata( const char *status, const char *reason ) {
 		+ Number( SDL_GetCPUCount() )
 #endif
 		+ ",\n  \"gpu\":";
-	if ( report.haveDevice ) {
+	if ( report.haveDevice && !idStr::Icmp( report.device.api, "opencl" ) ) {
+		text += "{\"name\":" + PT_ReportJsonString( report.device.name )
+			+ ",\"api\":\"opencl\""
+			+ ",\"total_memory_bytes\":" + Number( (double)report.device.totalMemory )
+			+ ",\"opencl_driver_version\":" + PT_ReportJsonString( report.device.driverString )
+			+ ",\"opencl_device_version\":" + PT_ReportJsonString( report.device.apiVersion )
+			+ ",\"compute_units\":" + Number( report.device.multiprocessors )
+			+ ",\"opencl_c_major\":" + Number( report.device.computeMajor )
+			+ ",\"opencl_c_minor\":" + Number( report.device.computeMinor ) + "}";
+	} else if ( report.haveDevice ) {
 		text += "{\"name\":" + PT_ReportJsonString( report.device.name )
 			+ ",\"total_memory_bytes\":" + Number( (double)report.device.totalMemory )
 			+ ",\"cuda_driver_version\":" + Number( report.device.driverVersion )
@@ -370,8 +379,8 @@ bool R_PT_ReportBegin( const idCmdArgs &args, const char *mode, const char *sour
 	}
 #endif
 	report.haveDevice = false;
-#ifdef HAVE_CUDA
-	if ( !report.openGL ) report.haveDevice = PT_CUDA_GetDeviceInfo( report.device );
+#ifdef HAVE_PATHTRACER
+	if ( !report.openGL ) report.haveDevice = R_PT_GetDeviceInfo( report.device );
 #endif
 	if ( !report.haveDevice && !report.openGL ) common->Warning( "PT capture GPU information unavailable" );
 	if ( !report.mode.Icmp( "benchmark" ) || report.openGL ) {

@@ -29,7 +29,7 @@
 */
 
 idCVar r_ptDraw( "r_ptDraw", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL, "draw 3D views with the path tracer instead of OpenGL" );
-idCVar r_ptBackend( "r_ptBackend", "auto", CVAR_RENDERER | CVAR_ARCHIVE, "path tracer compute backend: auto, cuda" );
+idCVar r_ptBackend( "r_ptBackend", "auto", CVAR_RENDERER | CVAR_ARCHIVE, "path tracer compute backend: auto, cuda, opencl" );
 idCVar r_ptMode( "r_ptMode", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "0 = path tracing, 1 = BVH debug, 2 = textured combined, 3 = base color, 4 = albedo texture, 5 = normal map, 6 = specular map, 7 = Whitted ray tracing", 0, PT_MODE_COUNT - 1 );
 idCVar r_ptDebug( "r_ptDebug", "0", CVAR_RENDERER | CVAR_BOOL, "print path tracer scene / timing info" );
 
@@ -121,9 +121,12 @@ To add a backend, implement idPathTracerBackend and append its factory here.
 */
 static const ptBackendFactory_t ptBackendFactories[] = {
 #ifdef HAVE_CUDA
-	{ "cuda", PT_CUDA_IsAvailable, PT_CUDA_CreateBackend },
+	{ "cuda", PT_CUDA_IsAvailable, PT_CUDA_CreateBackend, PT_CUDA_GetDeviceInfo },
 #endif
-	{ NULL, NULL, NULL }
+#ifdef HAVE_OPENCL
+	{ "opencl", PT_OpenCL_IsAvailable, PT_OpenCL_CreateBackend, PT_OpenCL_GetDeviceInfo },
+#endif
+	{ NULL, NULL, NULL, NULL }
 };
 
 typedef struct {
@@ -232,6 +235,24 @@ static const ptBackendFactory_t *PT_FindFactory( const char *name ) {
 		}
 	}
 	return NULL;
+}
+
+/*
+========================
+R_PT_GetDeviceInfo
+========================
+*/
+bool R_PT_GetDeviceInfo( ptBackendDeviceInfo_t &info ) {
+	const ptBackendFactory_t *factory = NULL;
+	if ( pt.backend ) {
+		for ( int i = 0; ptBackendFactories[i].name && !factory; i++ ) {
+			if ( idStr::Icmp( ptBackendFactories[i].name, pt.backend->Name() ) == 0 ) factory = &ptBackendFactories[i];
+		}
+	} else {
+		factory = PT_FindFactory( r_ptBackend.GetString() );
+	}
+	memset( &info, 0, sizeof( info ) );
+	return factory && factory->getDeviceInfo && factory->getDeviceInfo( info );
 }
 
 /*
