@@ -105,11 +105,14 @@ __global__ void BuildRadixTreeKernel(
 	int d = (deltaRight >= deltaLeft) ? 1 : -1;
 
 	// compute upper bound for range length
+	// lmax must stay a power of two for the binary search below: clamping it to N
+	// left the root unable to reach the last primitives whenever N is not a power
+	// of two, dropping them from the tree. No bound is needed, lbvhDelta returns -1
+	// outside [0, N), which always ends the loop.
 	int deltaMin = lbvhDelta(sortedMortonCodes, N, i, i - d);
 	int lmax = 2;
 	while (lbvhDelta(sortedMortonCodes, N, i, i + lmax * d) > deltaMin) {
 		lmax <<= 1;
-		if (lmax > N) { lmax = N; break; }  // Safety bound
 	}
 
 	// binary search for the actual range length
