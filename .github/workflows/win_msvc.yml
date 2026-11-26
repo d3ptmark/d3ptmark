@@ -44,12 +44,12 @@ jobs:
         # build with cmake and visual studio
         #echo $PWD # /d/a/dhewm3/dhewm3
         # NOTE: not setting -G "Visual Studio 17 2022" so it just uses the default VS version it can find
-        cmake -A Win32 -DDHEWM3LIBS="../dhewm3-libs-master/i686-w64-mingw32/" -DDEDICATED=ON -DTOOLS=ON -S neo/ -B build
+        cmake -A Win32 -DDHEWM3LIBS="../dhewm3-libs-master/i686-w64-mingw32/" -DPATHTRACED=OFF -S neo/ -B build
         time cmake --build build/ --config RelWithDebInfo
     - name: Create testbuild package
       run: |
         # Create release directory tree
-        export PKGDIR="dhewm3-win32-$(git rev-parse --short HEAD)"
+        export PKGDIR="d3ptmark-win32-$(git rev-parse --short HEAD)"
         echo "pkgname=$PKGDIR" >> $GITHUB_ENV
         mkdir -p publish/$PKGDIR/base
         mkdir publish/$PKGDIR/d3xp
@@ -57,14 +57,14 @@ jobs:
         mkdir -p debug-syms/$PKGDIR
         # Copy release assets
         cd build/RelWithDebInfo
-        cp dhewm3.exe dhewm3ded.exe base.dll d3xp.dll ../../publish/$PKGDIR/
+        cp d3ptmark-le.exe base.dll d3xp.dll ../../publish/$PKGDIR/
         cp -r *.pdb ../../debug-syms/$PKGDIR/
         cd ../..
         # Copy misc assets
         cp base/gamepad.cfg publish/$PKGDIR/base/
         cp base/gamepad-d3xp.cfg publish/$PKGDIR/d3xp/
         cp COPYING.txt publish/$PKGDIR/
-        echo "dhewm3 for 32bit (x86) Windows, built $(date)" > publish/$PKGDIR/README.txt
+        echo "d3ptmark for 32bit (x86) Windows, built $(date)" > publish/$PKGDIR/README.txt
         echo -e "from ${{ github.ref_name }} commit ${{ github.sha }}\n" >> publish/$PKGDIR/README.txt
         cat README.md >> publish/$PKGDIR/README.txt
         cp Changelog.md publish/$PKGDIR/Changelog.txt
@@ -115,12 +115,12 @@ jobs:
         # build with cmake and visual studio
         #echo $PWD # /d/a/dhewm3/dhewm3
         # NOTE: not setting -G "Visual Studio 17 2022" so it just uses the default VS version it can find
-        cmake -A x64 -DDHEWM3LIBS="../dhewm3-libs-master/x86_64-w64-mingw32/" -DDEDICATED=ON -DTOOLS=ON -S neo/ -B build
+        cmake -A x64 -DDHEWM3LIBS="../dhewm3-libs-master/x86_64-w64-mingw32/" -DPATHTRACED=OFF -S neo/ -B build
         time cmake --build build/ --config RelWithDebInfo
     - name: Create testbuild package
       run: |
         # Create release directory tree
-        export PKGDIR="dhewm3-win64-$(git rev-parse --short HEAD)"
+        export PKGDIR="d3ptmark-win64-$(git rev-parse --short HEAD)"
         echo "pkgname=$PKGDIR" >> $GITHUB_ENV
         #echo "PKGDIR is $PKGDIR"
         mkdir -p publish/$PKGDIR/base
@@ -129,14 +129,14 @@ jobs:
         mkdir -p debug-syms/$PKGDIR
         # Copy release assets
         cd build/RelWithDebInfo
-        cp dhewm3.exe dhewm3ded.exe base.dll d3xp.dll ../../publish/$PKGDIR/
+        cp d3ptmark-le.exe base.dll d3xp.dll ../../publish/$PKGDIR/
         cp -r *.pdb ../../debug-syms/$PKGDIR/
         cd ../..
         # Copy misc assets
         cp base/gamepad.cfg publish/$PKGDIR/base/
         cp base/gamepad-d3xp.cfg publish/$PKGDIR/d3xp/
         cp COPYING.txt publish/$PKGDIR/
-        echo "dhewm3 for 64bit (amd64 aka x86_64 aka x64) Windows, built $(date)" > publish/$PKGDIR/README.txt
+        echo "d3ptmark for 64bit (amd64 aka x86_64 aka x64) Windows, built $(date)" > publish/$PKGDIR/README.txt
         echo -e "from ${{ github.ref_name }} commit ${{ github.sha }}\n" >> publish/$PKGDIR/README.txt
         cat README.md >> publish/$PKGDIR/README.txt
         cp Changelog.md publish/$PKGDIR/Changelog.txt

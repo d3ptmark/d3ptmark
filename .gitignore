@@ -1,5 +1,6 @@
 /build*
 !/build.sh
+!/build.bat
 *~
 .*.swp
 *.pyc
