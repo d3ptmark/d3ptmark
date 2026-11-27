@@ -64,12 +64,32 @@ point the engine at an installation:
 
 | Command | Description |
 |---------|-------------|
-| `r_ptBenchmark <demo> <spp>` | Replay a render demo, converging every frame to exactly `<spp>` samples per pixel |
-| `r_glBenchmark <demo>` | Replay the same demo with OpenGL for image-by-image comparison |
+| `r_ptBenchmark <demo> <spp> [uncapped] [save_image 0\|1]` | Replay a render demo, converging every frame to exactly `<spp>` samples per pixel |
+| `r_glBenchmark <demo> [uncapped] [save_image 0\|1]` | Replay the same demo with OpenGL for image-by-image comparison |
 | `r_ptSequence <start> <end> [spp]` | Path trace a range of live game ticks |
 | `r_ptCompare [spp]` | Save an OpenGL and a path-traced screenshot of the current view |
 | `r_ptAbort` / `r_glAbort` | Cancel a capture, keeping finished images |
 | `r_ptInfo` | Backend, device, memory and timing info |
+
+By default playback is capped at the demo's 30 Hz and every frame is saved as an image.
+`uncapped` runs as fast as the GPU allows (no 30 Hz cap, vsync off for the run) and
+`save_image 0` skips the image writes, so `uncapped save_image 0` measures pure throughput:
+
+```sh
+./build/d3ptmark-pt +r_ptPreset gameplay_med +r_ptBenchmark demo1 1 uncapped save_image 0
+```
+
+### Headless (servers, CLI)
+
+`--headless` runs without a window and without a display (no X11/Wayland session needed):
+OpenGL goes through SDL's offscreen driver (EGL), sound is off, and the engine quits when
+the benchmark ends with exit code 0 (completed), 1 (aborted/failed) or 2 (did not start):
+
+```sh
+./build/d3ptmark-pt --headless +set fs_basepath /path/to/doom3 \
+    +set r_mode -1 +set r_customWidth 1920 +set r_customHeight 1080 \
+    +r_ptBenchmark demo1 32 uncapped save_image 0
+```
 
 Quality is set with `r_ptPreset` (`gameplay_low/med/high/ultra`, `cinematic_low/med/high/ultra`).
 Images and capture reports (timings plus GPU/CPU telemetry) are written below `screenshots/`

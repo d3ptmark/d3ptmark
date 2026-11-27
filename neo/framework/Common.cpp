@@ -52,6 +52,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "renderer/ModelManager.h"
 #include "renderer/RenderSystem.h"
 #include "renderer/tr_local.h" // to get swapinterval and refreshrate
+#include "renderer_pt/pt_benchmark.h" // R_BenchmarkUncapped()
 #include "tools/compilers/compiler_public.h"
 #include "tools/compilers/aas/AASFileManager.h"
 #include "tools/edit_public.h"
@@ -897,6 +898,9 @@ void idCommonLocal::ParseCommandLine( int argc, char **argv ) {
 	com_numConsoleLines = 0;
 	// API says no program path
 	for ( i = 0; i < argc; i++ ) {
+		if ( !idStr::Icmp( argv[ i ], "--headless" ) ) {
+			continue;	// handled before SDL starts, see Com_HeadlessRequested()
+		}
 		if ( argv[ i ][ 0 ] == '+' ) {
 			com_numConsoleLines++;
 			com_consoleLines[ com_numConsoleLines-1 ].AppendArg( argv[ i ] + 1 );
@@ -2568,7 +2572,8 @@ void idCommonLocal::Frame( void ) {
 			if(nextTicTime > now) {
 				nextTicTime = now;
 			} // else a new tic is started anyway (which often means that this frame was too long)
-		} else if ( com_ticNumber == ticNumAtStart ) {
+		} else if ( com_ticNumber == ticNumAtStart && !R_BenchmarkUncapped() ) {
+			// an uncapped benchmark runs the next frame immediately instead of at the next 60 Hz tic
 			Com_WaitForNextTicStart();
 		}
 		// else the com_ticNumber has already been updated and it's past time to start the next frame
@@ -2883,6 +2888,37 @@ int idCommonLocal::AsyncThread(void* arg)
 #include "../sys/win32/win_local.h" // for Conbuf_AppendText()
 #endif // _WIN32
 
+static bool comHeadless = false;
+
+idCVar com_headless( "com_headless", "0", CVAR_SYSTEM | CVAR_BOOL | CVAR_NOCHEAT,
+	"run without a window through SDL's offscreen video driver (no display needed); startup only, also --headless" );
+
+bool Com_IsHeadless() {
+	return comHeadless;
+}
+
+/*
+==================
+Com_HeadlessRequested
+
+SDL video starts before the command line is parsed into cvars, so the
+headless switch is read from argv directly: --headless or
++set/+seta com_headless <non-zero>.
+==================
+*/
+static bool Com_HeadlessRequested( int argc, char **argv ) {
+	bool headless = false;
+	for ( int i = 0; i < argc; i++ ) {
+		if ( !idStr::Icmp( argv[i], "--headless" ) ) {
+			headless = true;
+		} else if ( ( !idStr::Icmp( argv[i], "+set" ) || !idStr::Icmp( argv[i], "+seta" ) ) && i + 2 < argc
+			&& !idStr::Icmp( argv[i + 1], "com_headless" ) ) {
+			headless = idStr::Cmp( argv[i + 2], "0" ) != 0;
+		}
+	}
+	return headless;
+}
+
 static bool checkForHelp(int argc, char **argv)
 {
 	const char* helpArgs[] = { "--help", "-h", "-help", "-?", "/?" };
@@ -2905,6 +2941,10 @@ static bool checkForHelp(int argc, char **argv)
 				WriteString(ENGINE_VERSION " - http://dhewm3.org\n");
 				WriteString("Commandline arguments:\n");
 				WriteString("-h or --help: Show this help\n");
+#ifndef ID_DEDICATED
+				WriteString("--headless: run without a window or display (offscreen OpenGL), sound off;\n");
+				WriteString("  quits when an r_ptBenchmark/r_glBenchmark run ends. Same as +set com_headless 1\n");
+#endif
 				WriteString("+<command> [command arguments]\n");
 				WriteString("  executes a command (with optional arguments)\n");
 
@@ -3014,6 +3054,20 @@ void idCommonLocal::Init( int argc, char **argv ) {
 	char dummy[] = "SDL_VIDEODRIVER=dummy\0";
 	SDL_putenv(dummy);
 #endif
+#endif
+
+#if !defined( ID_DEDICATED ) && SDL_VERSION_ATLEAST(2, 0, 0)
+	// headless: SDL's offscreen driver creates GL contexts through EGL without any
+	// window system; GLimp_Init falls back to a hidden window if that fails
+	comHeadless = Com_HeadlessRequested( argc, argv );
+	if ( comHeadless ) {
+  #if SDL_VERSION_ATLEAST(3, 0, 0)
+		SDL_SetHint( SDL_HINT_VIDEO_DRIVER, "offscreen" );
+  #else
+		SDL_setenv( "SDL_VIDEODRIVER", "offscreen", 1 );
+  #endif
+		Sys_Printf( "Headless mode: SDL offscreen video driver, no window\n" );
+	}
 #endif
 
 #if SDL_VERSION_ATLEAST(3, 0, 0)
@@ -3301,6 +3355,11 @@ void idCommonLocal::InitGame( void ) {
 	usercmdGen->Init();
 
 	PrintLoadingMessage( common->GetLanguageDict()->GetString( "#str_04346" ) );
+
+	com_headless.SetBool( comHeadless );	// reflects the startup choice; changing it later has no effect
+	if ( comHeadless ) {
+		cvarSystem->SetCVarBool( "s_noSound", true );	// servers usually have no audio device
+	}
 
 	// start the sound system, but don't do any hardware operations yet
 	soundSystem->Init();

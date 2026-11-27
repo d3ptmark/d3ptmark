@@ -1,5 +1,7 @@
 #include "sys/platform.h"
 
+#include "framework/CmdSystem.h"
+#include "framework/Common.h"
 #include "framework/Console.h"
 #include "framework/Session.h"
 #include "renderer/tr_local.h"
@@ -20,6 +22,8 @@ static struct {
 	bool openGL = false;
 	bool ready = false;
 	bool rendered = false;
+	bool uncapped = false;			// no 30 Hz pacing, vsync off, no 60 Hz engine wait
+	bool saveImages = true;
 	bool savedDraw = false, savedAccumulation = false;
 	int savedMode = 0;
 	int samples = 0, batch = 0, batches = 0;
@@ -40,6 +44,7 @@ R_BenchmarkActive
 ========================
 */
 bool R_BenchmarkActive() { return benchmark.active; }
+bool R_BenchmarkUncapped() { return benchmark.active && benchmark.uncapped; }
 bool R_GL_BenchmarkActive() { return benchmark.active && benchmark.openGL; }
 #ifdef HAVE_PATHTRACER
 bool R_PT_BenchmarkActive() { return benchmark.active && !benchmark.openGL; }
@@ -47,6 +52,26 @@ int R_PT_BenchmarkTargetFrames() { return benchmark.active ? benchmark.batches :
 int R_PT_BenchmarkBatch() { return benchmark.batch; }
 #endif
 
+/*
+========================
+R_BenchmarkHeadlessQuit
+
+A headless engine has nothing left to do once its benchmark is over: quit with
+0 (completed), 1 (aborted or failed) or 2 (did not start), for scripts and CI.
+========================
+*/
+static void R_BenchmarkHeadlessQuit( int exitCode ) {
+	if ( !Com_IsHeadless() ) return;
+	common->Printf( "[bench] headless run finished, quitting with exit code %d\n", exitCode );
+	Sys_SetExitCode( exitCode );
+	cmdSystem->BufferCommandText( CMD_EXEC_APPEND, "quit\n" );
+}
+
+/*
+========================
+R_EndBenchmark
+========================
+*/
 void R_EndBenchmark( bool completed ) {
 	if ( !benchmark.active ) return;
 	if ( benchmark.ready ) {
@@ -61,13 +86,18 @@ void R_EndBenchmark( bool completed ) {
 	const double seconds = ( Sys_MillisecondsPrecise() - benchmark.start ) * 0.001;
 	const int frames = benchmark.stats.frameMilliseconds.Num();
 	common->Printf( "\n=== %s Benchmark %s ===\n", benchmark.openGL ? "OpenGL" : "Path Tracer", completed ? "Complete" : "Aborted (partial results)" );
-	common->Printf( "  Demo: %s\n  Completed demo frames: %zu\n", benchmark.demo.c_str(), frames );
+	common->Printf( "  Demo: %s\n  Completed demo frames: %d\n", benchmark.demo.c_str(), frames );
+	common->Printf( "  Pacing: %s\n", benchmark.uncapped ? "uncapped (no 30 Hz playback cap, vsync off)" : "maximum 30 Hz playback" );
 	if ( !benchmark.openGL ) common->Printf( "  Samples/pixel/frame: %d (batch %d)\n", benchmark.samples, benchmark.batch );
 	common->Printf( "  Trace resolution: %dx%d\n  Accumulation dispatches: %d\n",
 		benchmark.width, benchmark.height, benchmark.stats.dispatches );
 	common->Printf( "  Measured wall time: %.3f s (excludes initial demo loading)\n", seconds );
-	common->Printf( "  Images saved: %d in %s/\n  Image encoding/writing total: %.3f s\n",
-		benchmark.stats.imagesWritten, benchmark.imageDirectory.c_str(), benchmark.stats.imageMilliseconds * 0.001 );
+	if ( benchmark.saveImages ) {
+		common->Printf( "  Images saved: %d in %s/\n  Image encoding/writing total: %.3f s\n",
+			benchmark.stats.imagesWritten, benchmark.imageDirectory.c_str(), benchmark.stats.imageMilliseconds * 0.001 );
+	} else {
+		common->Printf( "  Images saved: none (save_image 0)\n" );
+	}
 	if ( frames ) {
 		const double total = benchmark.stats.TotalMilliseconds();
 		common->Printf( "  Frame time ms: mean %.3f, min %.3f, median %.3f, p95 %.3f, p99 %.3f, max %.3f\n",
@@ -92,6 +122,10 @@ void R_EndBenchmark( bool completed ) {
 	r_ptAccumulation.SetBool( benchmark.savedAccumulation );
 	if ( !benchmark.openGL && RB_PT_GetBackend() ) RB_PT_GetBackend()->ResetAccumulation();
 #endif
+	// back to the configured vsync; the archived cvar was never changed, so an engine quit
+	// during the run cannot save vsync off. Shutdown may end the run after GL is gone.
+	if ( benchmark.uncapped && glConfig.isInitialized ) GLimp_SetSwapInterval( r_swapInterval.GetInteger() );
+	R_BenchmarkHeadlessQuit( completed ? 0 : 1 );
 }
 
 /*
@@ -117,7 +151,7 @@ R_BenchmarkAdvance
 ========================
 */
 bool R_BenchmarkAdvance() {
-	if ( !PT_BenchmarkCanAdvance( benchmark.ready, Sys_MillisecondsPrecise() - benchmark.frameStart ) ) return false;
+	if ( !PT_BenchmarkCanAdvance( benchmark.ready, Sys_MillisecondsPrecise() - benchmark.frameStart, benchmark.uncapped ) ) return false;
 	if ( !R_PT_ReportFrameEnd( benchmark.lastImage, benchmark.width, benchmark.height,
 		benchmark.lastImageMilliseconds, benchmark.frameRender ) ) {
 		benchmark.ready = false;
@@ -182,7 +216,7 @@ static bool R_BenchmarkCheckGLErrors( const char *stage ) {
 		const GLenum error = qglGetError();
 		if ( error == GL_NO_ERROR ) break;
 		common->Warning( "GL benchmark frame %d: %s (OpenGL error 0x%x)",
-			benchmark.stats.imagesWritten + 1, stage, error );
+			benchmark.stats.frameMilliseconds.Num() + 1, stage, error );
 		ok = false;
 	}
 	return ok;
@@ -200,6 +234,14 @@ void R_BenchmarkCaptureGL() {
 	R_IssueRenderCommands();
 	// GL errors persist until queried; renderer errors must not masquerade as readback failures.
 	R_BenchmarkCheckGLErrors( "renderer error before readback; checking capture separately" );
+	if ( !benchmark.saveImages ) {
+		// no readback: it only exists to write the image
+		benchmark.frameRender = Sys_MillisecondsPrecise() - benchmark.screenStart;
+		benchmark.lastImage.Clear();
+		benchmark.lastImageMilliseconds = 0;
+		benchmark.ready = true;
+		return;
+	}
 	GLint oldReadBuffer, oldPackAlignment;
 	qglGetIntegerv( GL_READ_BUFFER, &oldReadBuffer );
 	qglGetIntegerv( GL_PACK_ALIGNMENT, &oldPackAlignment );
@@ -226,7 +268,7 @@ void R_BenchmarkCaptureGL() {
 	R_PT_ReportPhase( "image_save" );
 	if ( !R_WriteScreenshotImage( image, pixels.Ptr(), benchmark.width, benchmark.height, benchmark.imageFormat ) ) {
 		fileSystem->RemoveFile( image );
-		common->Warning( "GL benchmark could not save frame %d; aborting", benchmark.stats.imagesWritten + 1 );
+		common->Warning( "GL benchmark could not save frame %d; aborting", benchmark.stats.frameMilliseconds.Num() + 1 );
 		R_EndBenchmark( false );
 		return;
 	}
@@ -250,7 +292,11 @@ void R_BenchmarkScreenComplete() {
 		return;
 	}
 	benchmark.frameRender += Sys_MillisecondsPrecise() - benchmark.screenStart;
-	if ( benchmark.frameBatches == benchmark.batches ) {
+	if ( benchmark.frameBatches == benchmark.batches && !benchmark.saveImages ) {
+		benchmark.lastImage.Clear();
+		benchmark.lastImageMilliseconds = 0;
+		benchmark.ready = true;
+	} else if ( benchmark.frameBatches == benchmark.batches ) {
 		const idStr image = va( "%s/frame_%06d_%dspp.%s", benchmark.imageDirectory.c_str(),
 			benchmark.stats.imagesWritten + 1, benchmark.samples, PT_BenchmarkImageExtension( benchmark.imageFormat ) );
 		const double start = Sys_MillisecondsPrecise();
@@ -258,7 +304,7 @@ void R_BenchmarkScreenComplete() {
 #ifdef HAVE_PATHTRACER
 		if ( !RB_PT_SaveImage( image, benchmark.imageFormat ) ) {
 			fileSystem->RemoveFile( image );
-			common->Warning( "PT benchmark could not save frame %d; aborting", benchmark.stats.imagesWritten + 1 );
+			common->Warning( "PT benchmark could not save frame %d; aborting", benchmark.stats.frameMilliseconds.Num() + 1 );
 			R_EndBenchmark( false );
 			return;
 		}
@@ -299,12 +345,18 @@ static bool PT_BenchmarkImageDirectory( const idStr &demo, int samples, bool ope
 R_StartBenchmark
 ========================
 */
-static void R_StartBenchmark( const idCmdArgs &args, bool openGL ) {
+static bool R_StartBenchmark( const idCmdArgs &args, bool openGL ) {
 	int samples = 0;
-	if ( openGL ? args.Argc() != 2 : ( args.Argc() != 3 || !PT_ParseBenchmarkSamples( args.Argv( 2 ), samples ) ) ) {
-		if ( openGL ) common->Warning( "Usage: r_glBenchmark <render_demo_name>" );
-		else common->Warning( "Usage: r_ptBenchmark <render_demo_name> <spp 1..100000>" );
-		return;
+	const int first = openGL ? 2 : 3;		// first optional argument
+	const char *options[8];
+	const int numOptions = args.Argc() - first;
+	for ( int i = 0; i < numOptions && i < 8; i++ ) options[i] = args.Argv( first + i );
+	bool uncapped, saveImages;
+	if ( numOptions < 0 || numOptions > 8 || ( !openGL && !PT_ParseBenchmarkSamples( args.Argv( 2 ), samples ) )
+		|| !PT_ParseBenchmarkOptions( numOptions, options, uncapped, saveImages ) ) {
+		if ( openGL ) common->Warning( "Usage: r_glBenchmark <render_demo_name> [uncapped] [save_image 0|1]" );
+		else common->Warning( "Usage: r_ptBenchmark <render_demo_name> <spp 1..100000> [uncapped] [save_image 0|1]" );
+		return false;
 	}
 	if ( R_BenchmarkActive() || R_GLSequenceActive()
 #ifdef HAVE_PATHTRACER
@@ -312,38 +364,40 @@ static void R_StartBenchmark( const idCmdArgs &args, bool openGL ) {
 #endif
 		) {
 		common->Warning( "A renderer capture/benchmark is active; use r_glAbort or r_ptAbort first" );
-		return;
+		return false;
 	}
 #ifdef HAVE_PATHTRACER
 	if ( !openGL && !RB_PT_IsSupported() ) {
 		common->Warning( "Path tracer benchmark requires a usable r_ptBackend" );
-		return;
+		return false;
 	}
 #endif
 	idStr demo = args.Argv( 1 );
 	demo.BackSlashesToSlashes();
 	if ( demo.IsEmpty() || demo.Find( ".." ) >= 0 || demo[0] == '/' || demo.Find( ":" ) >= 0 ) {
 		common->Warning( "Benchmark requires a relative render demo name inside demos/" );
-		return;
+		return false;
 	}
 	if ( demo.Icmpn( "demos/", 6 ) ) demo = idStr( "demos/" ) + demo;
 	demo.DefaultFileExtension( ".demo" );
 	idStr imageDirectory;
-	if ( !PT_BenchmarkImageDirectory( demo, samples, openGL, imageDirectory ) ) return;
+	if ( !PT_BenchmarkImageDirectory( demo, samples, openGL, imageDirectory ) ) return false;
 	if ( !session->StartBenchmarkDemo( demo ) ) {
 		common->Warning( "Could not start render demo '%s'; benchmark not started", demo.c_str() );
-		return;
+		return false;
 	}
 	if ( !R_PT_ReportBegin( args, openGL ? "glbenchmark" : "benchmark", demo, samples ) ) {
 		session->Stop();
 		session->StartMenu();
-		return;
+		return false;
 	}
 	benchmark.stats = ptBenchmarkStatistics_t();
 	benchmark.openGL = openGL;
 	benchmark.demo = demo;
 	benchmark.imageDirectory = imageDirectory;
 	benchmark.imageFormat = cvarSystem->GetCVarInteger( "r_screenshotFormat" );
+	benchmark.uncapped = uncapped;
+	benchmark.saveImages = saveImages;
 	benchmark.samples = samples;
 	benchmark.batch = 1;
 #ifdef HAVE_PATHTRACER
@@ -361,22 +415,32 @@ static void R_StartBenchmark( const idCmdArgs &args, bool openGL ) {
 		r_ptAccumulation.SetBool( true );
 	}
 #endif
+	if ( uncapped ) GLimp_SetSwapInterval( 0 );	// restored by R_EndBenchmark
 	benchmark.active = true;
 	benchmark.start = Sys_MillisecondsPrecise();
 	R_BenchmarkNewFrame();
 	console->Close();
+	const char *pacing = uncapped ? "uncapped: no 30 Hz cap, vsync off" : "maximum 30 Hz playback";
 	if ( openGL ) {
-		common->Printf( "\n[glbench] %s: every recorded frame, maximum 30 Hz playback, no skipping; r_glAbort cancels.\n"
-			"[glbench] Output: %s/frame_NNNNNN.%s (viewport resolution, no HUD or overlays)\n",
-			demo.c_str(), benchmark.imageDirectory.c_str(), PT_BenchmarkImageExtension( benchmark.imageFormat ) );
-		return;
+		common->Printf( "\n[glbench] %s: every recorded frame, %s, no skipping; r_glAbort cancels.\n", demo.c_str(), pacing );
+		if ( saveImages ) {
+			common->Printf( "[glbench] Output: %s/frame_NNNNNN.%s (viewport resolution, no HUD or overlays)\n",
+				benchmark.imageDirectory.c_str(), PT_BenchmarkImageExtension( benchmark.imageFormat ) );
+		} else {
+			common->Printf( "[glbench] Image saving disabled (save_image 0)\n" );
+		}
+		return true;
 	}
 	common->Printf( "\n[ptbench] %s: %d spp/frame, %d samples/dispatch, %d dispatches/frame\n"
 		"[ptbench] Selected quality settings retained; progressive quality ramp disabled.\n"
-		"[ptbench] Every recorded frame is saved after convergence; maximum 30 Hz playback, no skipping. r_ptAbort cancels.\n",
-		demo.c_str(), samples, benchmark.batch, benchmark.batches );
-	common->Printf( "[ptbench] Output: %s/frame_NNNNNN_%dspp.%s (trace resolution, no HUD)\n",
-		benchmark.imageDirectory.c_str(), samples, PT_BenchmarkImageExtension( benchmark.imageFormat ) );
+		"[ptbench] Every recorded frame converges before advancing; %s, no skipping. r_ptAbort cancels.\n",
+		demo.c_str(), samples, benchmark.batch, benchmark.batches, pacing );
+	if ( saveImages ) {
+		common->Printf( "[ptbench] Output: %s/frame_NNNNNN_%dspp.%s (trace resolution, no HUD)\n",
+			benchmark.imageDirectory.c_str(), samples, PT_BenchmarkImageExtension( benchmark.imageFormat ) );
+	} else {
+		common->Printf( "[ptbench] Image saving disabled (save_image 0)\n" );
+	}
 	common->Printf( "[ptbench] Backend %s, scale %.3f, depth %d, light samples %d, denoise %d, swap interval %d\n",
 		cvarSystem->GetCVarString( "r_ptBackend" ), cvarSystem->GetCVarFloat( "r_ptRenderScale" ),
 		cvarSystem->GetCVarInteger( "r_ptMaxDepth" ), cvarSystem->GetCVarInteger( "r_ptMaxLightSamples" ),
@@ -386,6 +450,7 @@ static void R_StartBenchmark( const idCmdArgs &args, bool openGL ) {
 #else
 	common->Printf( "[ptbench] Rendering model: legacy path tracer\n" );
 #endif
+	return true;
 }
 
 /*
@@ -394,7 +459,7 @@ R_GL_Benchmark_f
 ========================
 */
 void R_GL_Benchmark_f( const idCmdArgs &args ) {
-	R_StartBenchmark( args, true );
+	if ( !R_StartBenchmark( args, true ) ) R_BenchmarkHeadlessQuit( 2 );
 }
 
 #ifdef HAVE_PATHTRACER
@@ -405,6 +470,6 @@ R_PT_Benchmark_f
 ========================
 */
 void R_PT_Benchmark_f( const idCmdArgs &args ) {
-	R_StartBenchmark( args, false );
+	if ( !R_StartBenchmark( args, false ) ) R_BenchmarkHeadlessQuit( 2 );
 }
 #endif

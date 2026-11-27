@@ -1,7 +1,11 @@
-#include "renderer_pt/pt_benchmark.h"
+// standard headers before idlib: idlib/Str.h redirects snprintf, which breaks MSVC's <cstdio>
 #include <stdio.h>
 #include <cmath>
 #include <cstring>
+#include "renderer_pt/pt_benchmark.h"
+
+class idCommon;
+idCommon *common = NULL;	// idlib links against the engine global
 
 #define CHECK( x ) do { if ( !( x ) ) { fprintf( stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x ); return 1; } } while ( 0 )
 
@@ -16,6 +20,21 @@ int main() {
 	CHECK( !PT_BenchmarkCanAdvance( true, 1000.0 / 30.0 - 0.0001 ) );
 	CHECK( PT_BenchmarkCanAdvance( true, 1000.0 / 30.0 ) );
 	CHECK( PT_BenchmarkCanAdvance( true, 1000 ) );
+	// uncapped runs advance as soon as the frame is done, never before
+	CHECK( PT_BenchmarkCanAdvance( true, 0, true ) );
+	CHECK( !PT_BenchmarkCanAdvance( false, 1000, true ) );
+	bool uncapped = true, saveImages = false;
+	CHECK( PT_ParseBenchmarkOptions( 0, NULL, uncapped, saveImages ) && !uncapped && saveImages );
+	const char *both[] = { "save_image", "0", "UNCAPPED" };
+	CHECK( PT_ParseBenchmarkOptions( 3, both, uncapped, saveImages ) && uncapped && !saveImages );
+	const char *save[] = { "save_image", "1" };
+	CHECK( PT_ParseBenchmarkOptions( 2, save, uncapped, saveImages ) && !uncapped && saveImages );
+	const char *badValue[] = { "save_image", "2" };
+	const char *missingValue[] = { "save_image" };
+	const char *unknown[] = { "fast" };
+	CHECK( !PT_ParseBenchmarkOptions( 2, badValue, uncapped, saveImages ) );
+	CHECK( !PT_ParseBenchmarkOptions( 1, missingValue, uncapped, saveImages ) );
+	CHECK( !PT_ParseBenchmarkOptions( 1, unknown, uncapped, saveImages ) );
 	int samples = 17;
 	const char *bad[] = { "", "0", "-1", "32x", "1.5", "nan", "100001", "999999999999999999999999", " 32", "+32" };
 	for ( const char *text : bad ) {

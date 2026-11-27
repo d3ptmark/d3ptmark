@@ -314,8 +314,8 @@ r_ptMaterial status | save | reset | revert
 
 | Command | Description |
 |---------|-------------|
-| `r_ptBenchmark <demo> <spp>` | Replay a render demo, converging and saving every frame at exactly `<spp>` |
-| `r_glBenchmark <demo>` | Replay the same demo with OpenGL and save every frame |
+| `r_ptBenchmark <demo> <spp> [uncapped] [save_image 0\|1]` | Replay a render demo, converging and saving every frame at exactly `<spp>` |
+| `r_glBenchmark <demo> [uncapped] [save_image 0\|1]` | Replay the same demo with OpenGL and save every frame |
 | `r_ptCompare [spp]` | Save an OpenGL and a path-traced screenshot of the current view (default 64 spp) |
 | `r_ptSequence <start> <end> [spp]` | Path trace an inclusive range of live game ticks (default 256 spp) |
 | `r_glSequence` | OpenGL counterpart of `r_ptSequence` |
@@ -328,6 +328,19 @@ Spp targets are exact: captures split them into equal batches no larger than
 `r_ptSamplesPerPixel`, disable the startup quality ramp, and restore the previous renderer
 settings afterwards. Captures cannot overlap. See [Benchmark.md](../Benchmark.md) for
 benchmark timing details.
+
+Benchmark options, in any order after the required arguments:
+
+- `uncapped`: advance to the next demo frame as soon as the current one is finished. The
+  30 Hz playback cap and the engine's 60 Hz frame wait are lifted, and vsync is switched off
+  for the run only (`r_swapInterval` itself is not changed, so it is restored even if the
+  engine quits mid-run). Use it to measure throughput above 30 or 60 fps.
+- `save_image 0`: skip saving frames (and, for OpenGL, the readback that only exists for the
+  image). Timings then exclude image encoding and writing; `frames.csv` leaves `image_file`
+  empty. `save_image 1` is the default.
+
+Capped runs hold each finished frame until a 30 Hz interval has passed. With vsync on a 60 Hz
+display that rounds up to three refreshes, so capped playback runs at about 20 fps.
 
 ### OpenGL/PT frame pairs
 
@@ -350,6 +363,25 @@ Pair images by frame number, not run number. Keep the viewport size equal and us
 `r_ptRenderScale 1`. In `d3ptmark-pt`, match the lens to the demo's FOV and set
 `r_ptPhysicalDOF 0` for identical framing. Don't append `quit` to a command line that
 starts a benchmark; it aborts the run.
+
+### Headless runs
+
+`--headless` (or `+set com_headless 1`) starts the engine without a window, for servers and
+scripted runs:
+
+- OpenGL uses SDL's `offscreen` video driver, which creates the context through EGL with no
+  window system or display. This needs an EGL-capable driver (Mesa, NVIDIA). Where the
+  offscreen driver has no OpenGL support (for example on Windows), the engine falls back to a
+  hidden window, which still needs a desktop session.
+- The resolution comes from `r_mode -1` with `r_customWidth` / `r_customHeight`.
+- Sound is off (`s_noSound 1`), and console output goes to stdout.
+- After an `r_ptBenchmark` or `r_glBenchmark` run the engine quits with exit code 0
+  (completed), 1 (aborted or failed) or 2 (did not start, e.g. a misspelled demo name).
+  Other commands keep the engine running; end a script with `quit` (see
+  `configs/sequence_enpro.cfg`).
+
+Image saving, reports and telemetry work as usual; OpenGL frames are read back from the
+offscreen framebuffer.
 
 ### Live sequences
 

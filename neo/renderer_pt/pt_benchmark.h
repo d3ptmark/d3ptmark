@@ -3,6 +3,7 @@
 
 #include "idlib/containers/List.h"
 #include "idlib/Lib.h"
+#include "idlib/Str.h"
 #include <stdlib.h>
 #include <errno.h>
 
@@ -24,8 +25,28 @@ inline int PT_BenchmarkBatchSize( int samples, int presetBatch ) {
 	return batch;
 }
 
-inline bool PT_BenchmarkCanAdvance( bool imageSaved, double frameMilliseconds ) {
-	return imageSaved && frameMilliseconds >= 1000.0 / 30.0;
+// optional trailing benchmark arguments, in any order:
+//	uncapped		no 30 Hz demo pacing, vsync off, no 60 Hz engine frame wait
+//	save_image 0|1	save every finished frame (default 1)
+inline bool PT_ParseBenchmarkOptions( int count, const char *const *args, bool &uncapped, bool &saveImages ) {
+	uncapped = false;
+	saveImages = true;
+	for ( int i = 0; i < count; i++ ) {
+		if ( !idStr::Icmp( args[i], "uncapped" ) ) {
+			uncapped = true;
+		} else if ( !idStr::Icmp( args[i], "save_image" ) && i + 1 < count
+			&& ( !idStr::Cmp( args[i + 1], "0" ) || !idStr::Cmp( args[i + 1], "1" ) ) ) {
+			saveImages = args[++i][0] == '1';
+		} else {
+			return false;
+		}
+	}
+	return true;
+}
+
+// a finished demo frame is held for one 30 Hz recorded-frame interval unless the run is uncapped
+inline bool PT_BenchmarkCanAdvance( bool frameDone, double frameMilliseconds, bool uncapped = false ) {
+	return frameDone && ( uncapped || frameMilliseconds >= 1000.0 / 30.0 );
 }
 
 struct ptBenchmarkStatistics_t {
@@ -77,6 +98,7 @@ class idCmdArgs;
 void R_GL_Benchmark_f( const idCmdArgs &args );
 bool R_GL_BenchmarkActive();
 bool R_BenchmarkActive();
+bool R_BenchmarkUncapped();		// the engine loop must not wait for the next 60 Hz tic
 bool R_BenchmarkAdvance();
 void R_BenchmarkNewFrame();
 void R_BenchmarkScreenBegin();

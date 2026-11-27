@@ -60,6 +60,8 @@ typedef enum {
 
 extern idCVar		com_version;
 const idList<idStr> &	Com_GetStartupArguments();
+bool					Com_IsHeadless();		// --headless / +set com_headless 1: no window, no display needed
+extern idCVar		com_headless;
 extern idCVar		com_skipRenderer;
 extern idCVar		com_asyncSound;
 extern idCVar		com_machineSpec;

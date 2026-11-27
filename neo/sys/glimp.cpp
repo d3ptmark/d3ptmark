@@ -42,6 +42,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "framework/Licensee.h"
 
 #include "renderer/tr_local.h"
+#include "framework/Common.h"
 
 #include "sys/sys_imgui.h"
 
@@ -176,15 +177,24 @@ static void SetSDLIcon()
 
 /*
 ===================
-GLimp_Init
+GLimp_CreateWindow
+
+hidden: headless mode, the window is never shown (and with SDL's offscreen
+video driver there is no window system at all)
 ===================
 */
-bool GLimp_Init(glimpParms_t parms) {
+static bool GLimp_CreateWindow(glimpParms_t parms, bool hidden) {
 	common->Printf("Initializing OpenGL subsystem\n");
 
 	assert(SDL_WasInit(SDL_INIT_VIDEO));
 
 	My_SDL_WindowFlags flags = SDL_WINDOW_OPENGL;
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+	if (hidden) {
+		flags |= SDL_WINDOW_HIDDEN;
+		parms.fullScreen = 0;
+	}
+#endif
 
 	if (parms.fullScreen == 1)
 	{
@@ -574,6 +584,13 @@ try_again:
 	#endif // SDL2
 
 		context = SDL_GL_CreateContext(window);
+		if (!context && hidden) {
+			// headless: report it so GLimp_Init can try another video driver
+			common->Warning("Couldn't create an OpenGL context: %s", SDL_GetError());
+			SDL_DestroyWindow(window);
+			window = NULL;
+			return false;
+		}
 
 		GLimp_SetSwapInterval( r_swapInterval.GetInteger() );
 		r_swapInterval.ClearModified();
@@ -797,6 +814,44 @@ try_again:
 #endif
 
 	return true;
+}
+
+/*
+===================
+GLimp_Init
+
+Headless mode (Com_IsHeadless) asks for SDL's offscreen video driver at startup.
+When that driver cannot provide an OpenGL context (no EGL, e.g. on Windows),
+video is restarted with the default driver and a hidden window, which still
+needs a display.
+===================
+*/
+bool GLimp_Init(glimpParms_t parms) {
+	if (!Com_IsHeadless()) {
+		return GLimp_CreateWindow(parms, false);
+	}
+	if (GLimp_CreateWindow(parms, true)) {
+		return true;
+	}
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+	const char *driver = SDL_GetCurrentVideoDriver();
+	if (driver && !idStr::Icmp(driver, "offscreen")) {
+		common->Warning("Headless: SDL's offscreen video driver has no OpenGL support here, using a hidden window (needs a display)");
+		SDL_QuitSubSystem(SDL_INIT_VIDEO);
+  #if SDL_VERSION_ATLEAST(3, 0, 0)
+		SDL_ResetHint(SDL_HINT_VIDEO_DRIVER);
+		const bool restarted = SDL_InitSubSystem(SDL_INIT_VIDEO);
+  #else
+		SDL_setenv("SDL_VIDEODRIVER", "", 1);
+		const bool restarted = SDL_InitSubSystem(SDL_INIT_VIDEO) == 0;
+  #endif
+		if (restarted) {
+			return GLimp_CreateWindow(parms, true);
+		}
+		common->Warning("Couldn't restart SDL video: %s", SDL_GetError());
+	}
+#endif
+	return false;
 }
 
 /*
