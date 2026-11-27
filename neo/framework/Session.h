@@ -155,6 +155,7 @@ public:
 	virtual const char *GetCurrentMapName( void ) = 0;
 
 	virtual int		GetSaveGameVersion( void ) = 0;
+	virtual bool	StartBenchmarkDemo( const char *name ) = 0;
 
 	// The render world and sound world used for this session.
 	idRenderWorld *	rw;

@@ -170,8 +170,14 @@ void idSysLocal::StartProcess( const char *exeName, bool quit ) {
 Sys_Quit
 ================
 */
+static int sys_exitCode = EXIT_SUCCESS;
+
+void Sys_SetExitCode( int code ) {
+	sys_exitCode = code;
+}
+
 void Sys_Quit(void) {
-	Posix_Exit( EXIT_SUCCESS );
+	Posix_Exit( sys_exitCode );
 }
 
 /*

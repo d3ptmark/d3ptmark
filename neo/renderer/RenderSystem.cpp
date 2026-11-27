@@ -134,7 +134,7 @@ R_IssueRenderCommands
 Called by R_EndFrame each frame
 ====================
 */
-static void R_IssueRenderCommands( void ) {
+void R_IssueRenderCommands( void ) {
 	if ( frameData->cmdHead->commandId == RC_NOP
 		&& !frameData->cmdHead->next ) {
 		// nothing to issue

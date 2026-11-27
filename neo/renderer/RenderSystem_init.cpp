@@ -39,6 +39,7 @@ If you have questions concerning this license or the applicable additional terms
 #include "ui/UserInterface.h"
 
 #include "renderer/tr_local.h"
+#include "renderer_pt/pt_benchmark.h"
 
 #include "framework/GameCallbacks_local.h"
 #include "framework/Game.h"
@@ -871,9 +872,9 @@ void R_InitOpenGL( void ) {
 	r_renderer.SetModified();
 	tr.SetBackEndRenderer();
 
-#ifdef HAVE_CUDA
-	// initialize CUDA path tracer if enabled
-	RB_CUDA_Init();
+#ifdef HAVE_PATHTRACER
+	// the backend itself is created lazily on the first frame with r_ptDraw 1
+	RB_PT_Init();
 #endif
 
 	// allocate the frame data, which may be more if smp is enabled
@@ -1412,10 +1413,56 @@ WriteScreenshotForSTBIW
 Callback to each stbi_write_* function
 ==================
 */
+struct screenshotWriteContext_t {
+	idFile *file;
+	bool failed;
+};
+
+static bool screenshotWriteSucceeded = false;
+bool R_ScreenshotWriteSucceeded() { return screenshotWriteSucceeded; }
+
 static void WriteScreenshotForSTBIW(void* context, void* data, int size)
 {
-	idFile* f = (idFile*)context;
-	f->Write(data, size);
+	screenshotWriteContext_t *write = (screenshotWriteContext_t *)context;
+	if ( !write->failed && write->file->Write( data, size ) != size ) write->failed = true;
+}
+
+// Encodes an already rendered, top-down RGB image without drawing another frame.
+bool R_WriteScreenshotImage( const char *fileName, const byte *rgb, int width, int height,
+							int format, const char *basePath ) {
+	if ( !rgb || width <= 0 || height <= 0 ) {
+		common->Warning( "Invalid screenshot image for '%s'", fileName );
+		return false;
+	}
+	idFile *file = fileSystem->OpenFileWrite( fileName, basePath );
+	if ( !file ) {
+		common->Warning( "Could not open screenshot '%s' for writing", fileName );
+		return false;
+	}
+	screenshotWriteContext_t write = { file, false };
+	int encoded;
+	switch ( format ) {
+		default:
+			encoded = stbi_write_tga_to_func( WriteScreenshotForSTBIW, &write, width, height, 3, rgb );
+			break;
+		case 1:
+			encoded = stbi_write_bmp_to_func( WriteScreenshotForSTBIW, &write, width, height, 3, rgb );
+			break;
+		case 2:
+			stbi_write_png_compression_level = idMath::ClampInt( 0, 9, r_screenshotPngCompression.GetInteger() );
+			encoded = stbi_write_png_to_func( WriteScreenshotForSTBIW, &write, width, height, 3, rgb, 3 * width );
+			break;
+		case 3:
+			encoded = stbi_write_jpg_to_func( WriteScreenshotForSTBIW, &write, width, height, 3, rgb,
+				idMath::ClampInt( 1, 100, r_screenshotJpgQuality.GetInteger() ) );
+			break;
+	}
+	fileSystem->CloseFile( file );
+	if ( !encoded || write.failed ) {
+		common->Warning( "Could not encode/write screenshot '%s'", fileName );
+		return false;
+	}
+	return true;
 }
 
 /*
@@ -1434,6 +1481,7 @@ void idRenderSystemLocal::TakeScreenshot( int width, int height, const char *fil
 	int			i, j;
 
 	takingScreenshot = true;
+	screenshotWriteSucceeded = false;
 
 	int	pix = width * height;
 	int lineSize = width * 3;
@@ -1476,38 +1524,15 @@ void idRenderSystemLocal::TakeScreenshot( int width, int height, const char *fil
 		memcpy(line2, swapBuffer, lineSize);
 	}
 	
-	idFile* f;
-	if (strstr(fileName, "viewnote")) {
-		f = fileSystem->OpenFileWrite( fileName, "fs_cdpath" );
-	}
-	else {
-		f = fileSystem->OpenFileWrite( fileName );
-	}
-
 	// If no specific format is requested, default to using the CVar value.
 	if (g_screenshotFormat == -1) {
 		g_screenshotFormat = cvarSystem->GetCVarInteger( "r_screenshotFormat" );
 	}
 
-	switch (g_screenshotFormat) {
-		default:
-			stbi_write_tga_to_func( WriteScreenshotForSTBIW, f, width, height, 3, buffer );
-			break;
-		case 1:
-			stbi_write_bmp_to_func( WriteScreenshotForSTBIW, f, width, height, 3, buffer);
-			break;
-		case 2:
-			stbi_write_png_compression_level = idMath::ClampInt( 0, 9, r_screenshotPngCompression.GetInteger() );
-			stbi_write_png_to_func( WriteScreenshotForSTBIW, f, width, height, 3, buffer, 3 * width );
-			break;
-		case 3:
-			stbi_write_jpg_to_func( WriteScreenshotForSTBIW, f, width, height, 3, buffer, idMath::ClampInt( 1, 100, r_screenshotJpgQuality.GetInteger() ) );
-			break;
-	}
+	screenshotWriteSucceeded = R_WriteScreenshotImage( fileName, buffer, width, height, g_screenshotFormat,
+		strstr( fileName, "viewnote" ) ? "fs_cdpath" : "fs_savepath" );
 
 	g_screenshotFormat = -1;
-
-	fileSystem->CloseFile(f);
 
 	R_StaticFree( buffer );
 	R_StaticFree( swapBuffer );
@@ -2284,6 +2309,12 @@ R_InitCommands
 =================
 */
 void R_InitCommands( void ) {
+	cmdSystem->AddCommand( "r_glSequence", R_GLSequence_f, CMD_FL_RENDERER, "renders a range of demo frames with OpenGL and saves them as screenshots" );
+	cmdSystem->AddCommand( "r_glBenchmark", R_GL_Benchmark_f, CMD_FL_RENDERER, "replays and saves every recorded render-demo frame with OpenGL", idCmdSystem::ArgCompletion_DemoName );
+	cmdSystem->AddCommand( "r_glAbort", R_GLAbort_f, CMD_FL_RENDERER, "aborts r_glSequence or r_glBenchmark" );
+#ifdef HAVE_PATHTRACER
+	R_PT_InitCommands();
+#endif
 	cmdSystem->AddCommand( "MakeMegaTexture", idMegaTexture::MakeMegaTexture_f, CMD_FL_RENDERER|CMD_FL_CHEAT, "processes giant images" );
 	cmdSystem->AddCommand( "sizeUp", R_SizeUp_f, CMD_FL_RENDERER, "makes the rendered view larger" );
 	cmdSystem->AddCommand( "sizeDown", R_SizeDown_f, CMD_FL_RENDERER, "makes the rendered view smaller" );
@@ -2505,6 +2536,11 @@ idRenderSystemLocal::ShutdownOpenGL
 ========================
 */
 void idRenderSystemLocal::ShutdownOpenGL( void ) {
+
+#ifdef HAVE_PATHTRACER
+	// releases the backend and its GL blit texture while the context still exists
+	RB_PT_Shutdown();
+#endif
 
 	R_ShutdownFrameData();
 

@@ -144,6 +144,7 @@ void			Sys_Init( void );
 void			Sys_Shutdown( void );
 void			Sys_Error( const char *error, ...);
 void			Sys_Quit( void );
+void			Sys_SetExitCode( int code );	// process exit code used by Sys_Quit, 0 by default
 
 // note that this isn't journaled...
 char *			Sys_GetClipboardData( void );

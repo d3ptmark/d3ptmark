@@ -192,6 +192,12 @@ void Sys_Error( const char *error, ... ) {
 Sys_Quit
 ==============
 */
+static int sys_exitCode = 0;
+
+void Sys_SetExitCode( int code ) {
+	sys_exitCode = code;
+}
+
 void Sys_Quit( void ) {
 #ifdef ID_ALLOW_TOOLS
 	// Free OpenGL DLL.
@@ -204,7 +210,7 @@ void Sys_Quit( void ) {
 	timeEndPeriod( 1 );
 	Sys_ShutdownInput();
 	Sys_DestroyConsole();
-	ExitProcess( 0 );
+	ExitProcess( sys_exitCode );
 }
 
 

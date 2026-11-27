@@ -61,6 +61,15 @@ static void R_FinishDeform( drawSurf_t *drawSurf, srfTriangles_t *newTri, idDraw
 	newTri->ambientCache = vertexCache.AllocFrameTemp( ac, newTri->numVerts * sizeof( idDrawVert ) );
 	// if we are out of vertex cache, leave it the way it is
 	if ( newTri->ambientCache ) {
+#ifdef HAVE_PATHTRACER
+		extern idCVar r_ptDraw;
+		if ( r_ptDraw.GetBool() ) {
+			// The ray tracer needs frame-owned vertices, not the stack or GL cache.
+			const int bytes = newTri->numVerts * sizeof( idDrawVert );
+			newTri->verts = (idDrawVert *)R_FrameAlloc( bytes );
+			memcpy( newTri->verts, ac, bytes );
+		}
+#endif
 		drawSurf->geo = newTri;
 	}
 }

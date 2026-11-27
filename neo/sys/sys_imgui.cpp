@@ -40,6 +40,9 @@
 #include "renderer/tr_local.h" // glconfig
 #include "ui/DeviceContext.h"
 #include "ui/UserInterface.h"
+#ifdef HAVE_PATHTRACER
+#include "renderer_pt/pt_ui.h"
+#endif
 
 extern void Com_DrawDhewm3SettingsMenu(); // in framework/dhewm3SettingsMenu.cpp
 extern void Com_OpenCloseDhewm3SettingsMenu( bool open ); // ditto
@@ -366,6 +369,11 @@ void NewFrame()
 	if (openImguiWindows & D3_ImGuiWin_Settings) {
 		Com_DrawDhewm3SettingsMenu();
 	}
+#ifdef HAVE_PATHTRACER
+	if (openImguiWindows & D3_ImGuiWin_PathTracer) {
+		R_PT_DrawUI();
+	}
+#endif
 
 	if (openImguiWindows & D3_ImGuiWin_Demo) {
 		bool show_demo_window = true;

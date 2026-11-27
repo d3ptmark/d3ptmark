@@ -300,6 +300,7 @@ public:
 	void				StartRecordingRenderDemo( const char *name );
 	void				StopRecordingRenderDemo();
 	void				StartPlayingRenderDemo( idStr name );
+	bool				StartBenchmarkDemo( const char *name ) override;
 	void				StopPlayingRenderDemo();
 	void				CompressDemoFile( const char *scheme, const char *name );
 	void				TimeRenderDemo( const char *name, bool twice = false );
