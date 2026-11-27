@@ -1,9 +1,11 @@
+// STL before idlib (idlib/Str.h redefines snprintf, breaking MSVC's <cstdio>)
+#include <vector>
+
 #include "sys/platform.h"
 #include "renderer_pt/pt_material_cache.h"
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <vector>
 
 #define CHECK( condition ) do { \
 	if ( !( condition ) ) { \

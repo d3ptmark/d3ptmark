@@ -1,3 +1,9 @@
+// STL headers must come before idlib: idlib/Str.h redefines snprintf/vsnprintf
+// (use_idStr_snPrintf), which breaks the using-declarations in MSVC's <cstdio>.
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
 #include "sys/platform.h"
 #include "framework/Common.h"
 #include "framework/CVarSystem.h"
@@ -8,9 +14,6 @@
 #include "sys/sys_imgui.h"
 
 #ifndef IMGUI_DISABLE
-#include <algorithm>
-#include <cmath>
-#include <vector>
 
 static const char *ptRequestedTab = NULL;
 static std::vector<idCVar *> ptUIVariables;

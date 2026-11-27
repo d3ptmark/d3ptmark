@@ -1,3 +1,9 @@
+// System, STL and OpenCL headers must come before idlib: idlib/Str.h redefines
+// snprintf/vsnprintf (use_idStr_snPrintf), which breaks MSVC's <string>/<stdio.h>.
+#include <stdio.h>
+#include <stdlib.h>
+#include "renderer_pt/opencl/pt_opencl_device.h"
+
 #include "sys/platform.h"
 #include "framework/Common.h"
 #include "framework/CVarSystem.h"
@@ -6,10 +12,6 @@
 
 #include "renderer_pt/pt_backend.h"
 #include "renderer_pt/pt_scene.h"
-#include "renderer_pt/opencl/pt_opencl_device.h"
-
-#include <stdio.h>
-#include <stdlib.h>
 
 /*
 ===============================================================================

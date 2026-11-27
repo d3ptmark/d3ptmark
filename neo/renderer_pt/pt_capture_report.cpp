@@ -1,3 +1,12 @@
+// STL headers must come before idlib: idlib/Str.h redefines snprintf/vsnprintf
+// (use_idStr_snPrintf), which breaks the using-declarations in MSVC's <cstdio>.
+#include <atomic>
+#include <fstream>
+#include <iomanip>
+#include <locale>
+#include <sstream>
+#include <ctime>
+
 #include "sys/platform.h"
 
 #include "framework/Session.h"
@@ -7,12 +16,6 @@
 #include "renderer_pt/pt_benchmark.h"
 #include "sys/sys_sdl.h"
 
-#include <atomic>
-#include <fstream>
-#include <iomanip>
-#include <locale>
-#include <sstream>
-#include <ctime>
 #ifdef _WIN32
 #include <windows.h>
 #endif

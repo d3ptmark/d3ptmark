@@ -1,8 +1,10 @@
+// STL before idlib (idlib/Str.h redefines snprintf, breaking MSVC's <cstdio>)
+#include <limits>
+
 #include "sys/platform.h"
 #include "renderer_pt/pt_material_editor.h"
 #include "renderer_pt/pt_material_profiles.h"
 
-#include <limits>
 #include <stdio.h>
 #include <stdlib.h>
 
