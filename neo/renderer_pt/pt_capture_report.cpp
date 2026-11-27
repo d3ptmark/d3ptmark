@@ -1,11 +1,8 @@
 // STL headers must come before idlib: idlib/Str.h redefines snprintf/vsnprintf
 // (use_idStr_snPrintf), which breaks the using-declarations in MSVC's <cstdio>.
-#include <atomic>
-#include <fstream>
-#include <iomanip>
-#include <locale>
-#include <sstream>
-#include <ctime>
+#include <atomic>	// no idlib/engine equivalent for the telemetry thread flags
+#include <stdio.h>
+#include <time.h>
 
 #include "sys/platform.h"
 
@@ -14,30 +11,29 @@
 #include "renderer_pt/pt_capture_report.h"
 #include "renderer_pt/pt_render.h"
 #include "renderer_pt/pt_benchmark.h"
+#include "renderer_pt/pt_gpu_telemetry.h"
 #include "sys/sys_sdl.h"
 
 #ifdef _WIN32
 #include <windows.h>
 #endif
 
-#ifdef HAVE_NVML_CAPTURE
-#include <nvml.h>
-#endif
-
 static idCVar r_ptCaptureReport( "r_ptCaptureReport", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
 	"write local settings, invocation and frame reports for PT captures and GL benchmarks" );
 static idCVar r_ptCaptureTelemetry( "r_ptCaptureTelemetry", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
-	"sample supported NVIDIA GPU sensors at approximately 1 Hz during renderer captures" );
+	"sample GPU (NVML, Linux sysfs/fdinfo or Windows D3DKMT) and CPU sensors at approximately 1 Hz during renderer captures" );
 
-static std::string Number( double value ) {
-	std::ostringstream out;
-	out.imbue( std::locale::classic() );
-	out << std::fixed << std::setprecision( 6 ) << value;
-	return out.str();
+// the engine never changes LC_NUMERIC, so printf formatting uses '.' decimals
+static idStr Number( double value ) {
+	return idStr::Format( "%.6f", value );
 }
 
-static bool Write( idFile *file, const std::string &text ) {
-	return file && file->Write( text.data(), (int)text.size() ) == (int)text.size();
+static idStr Integer( long long value ) {
+	return idStr::Format( "%lld", value );
+}
+
+static bool Write( idFile *file, const idStr &text ) {
+	return file && file->Write( text.c_str(), text.Length() ) == text.Length();
 }
 
 static int PhaseIndex( const char *phase ) {
@@ -59,6 +55,7 @@ static struct {
 	bool openGL = false;
 	idFile *frames = NULL, *settings = NULL, *telemetry = NULL;
 	idStr directory, mode, source, command, sourceFingerprint, cpuModel, telemetryStatus;
+	idStr telemetrySource, telemetrySensors, telemetryFailure, telemetryUnavailable;
 	idDict original, effective;
 	ptBackendDeviceInfo_t device = {};
 	bool haveDevice = false;
@@ -66,28 +63,14 @@ static struct {
 	int captureBatch = 1;
 	int width = 0, height = 0, spp = 0, dispatches = 0;
 	double start = 0, frameStart = 0, sourceTime = 0;
-	std::time_t startedUnix = 0;
+	time_t startedUnix = 0;
 	double gpu = 0, path = 0, denoise = 0, postprocess = 0, toneMap = 0;
 	double scene = 0, backend = 0, readback = 0, totalGpu = 0, totalWall = 0;
 	ptBackendStats_t lastStats = {};
 	std::atomic<int> phase{0}, telemetryFrame{0};
 	std::atomic<bool> stopTelemetry{false}, telemetryWriteFailed{false}, sensorError{false};
 	SDL_Thread *thread = NULL;
-#ifdef HAVE_NVML_CAPTURE
-	decltype( SDL_LoadObject( "" ) ) library = NULL;
-	nvmlDevice_t nvmlDevice = NULL;
-	decltype( &nvmlInit_v2 ) init = NULL;
-	decltype( &nvmlShutdown ) shutdown = NULL;
-	decltype( &nvmlDeviceGetHandleByPciBusId_v2 ) deviceByPci = NULL;
-	decltype( &nvmlDeviceGetTemperature ) temperature = NULL;
-	decltype( &nvmlDeviceGetUtilizationRates ) utilization = NULL;
-	decltype( &nvmlDeviceGetPowerUsage ) power = NULL;
-	decltype( &nvmlDeviceGetClockInfo ) clock = NULL;
-	decltype( &nvmlDeviceGetMemoryInfo ) memory = NULL;
-	decltype( &nvmlDeviceGetFanSpeed ) fan = NULL;
-	decltype( &nvmlDeviceGetCurrentClocksThrottleReasons ) throttle = NULL;
-	bool nvmlInitialized = false;
-#endif
+	idGpuTelemetry *gpuTelemetry = NULL, *cpuTelemetry = NULL;
 } report;
 
 static idDict Settings() {
@@ -105,8 +88,8 @@ static idDict Settings() {
 	return result;
 }
 
-static std::string DictJson( const idDict &dict ) {
-	std::string result = "{";
+static idStr DictJson( const idDict &dict ) {
+	idStr result = "{";
 	for ( int i = 0; i < dict.GetNumKeyVals(); i++ ) {
 		const idKeyValue *kv = dict.GetKeyVal( i );
 		if ( i ) result += ",";
@@ -115,23 +98,23 @@ static std::string DictJson( const idDict &dict ) {
 	return result + "\n  }";
 }
 
-static std::string StartupJson() {
+static idStr StartupJson() {
 	const idStrList &args = Com_GetStartupArguments();
-	std::string result = "[";
+	idStr result = "[";
 	for ( int i = 0; i < args.Num(); i++ ) {
 		if ( i ) result += ",";
 		const bool redact = i > 0 && PT_ReportSensitiveName( args[i - 1].c_str() );
-		result += PT_ReportJsonString( redact ? "[redacted]" : PT_ReportRedactArgument( args[i].c_str() ) );
+		result += PT_ReportJsonString( redact ? idStr( "[redacted]" ) : PT_ReportRedactArgument( args[i] ) );
 	}
 	return result + "]";
 }
 
 static bool Metadata( const char *status, const char *reason ) {
-	std::string text = "{\n  \"schema_version\":1,\n  \"status\":" + PT_ReportJsonString( status )
+	idStr text = "{\n  \"schema_version\":1,\n  \"status\":" + PT_ReportJsonString( status )
 		+ ",\n  \"reason\":" + PT_ReportJsonString( reason )
 		+ ",\n  \"mode\":" + PT_ReportJsonString( report.mode.c_str() )
 		+ ",\n  \"source\":" + PT_ReportJsonString( report.source.c_str() )
-		+ ",\n  \"started_unix_s\":" + std::to_string( report.startedUnix )
+		+ ",\n  \"started_unix_s\":" + Integer( (long long)report.startedUnix )
 		+ ",\n  \"source_fingerprint_fnv1a64\":" + PT_ReportJsonString( report.sourceFingerprint.c_str() )
 		+ ",\n  \"startup_argv\":" + StartupJson()
 		+ ",\n  \"capture_command\":" + PT_ReportJsonString( report.command.c_str() )
@@ -178,10 +161,14 @@ static bool Metadata( const char *status, const char *reason ) {
 	} else if ( report.openGL ) text += "{\"name\":" + PT_ReportJsonString( glConfig.renderer_string ? glConfig.renderer_string : "" ) + "}";
 	else text += "null";
 	text += ",\n  \"telemetry_status\":" + PT_ReportJsonString( report.telemetryStatus.c_str() )
+		+ ",\n  \"telemetry_source\":" + ( report.telemetrySource.IsEmpty() ? "null" : PT_ReportJsonString( report.telemetrySource.c_str() ) )
+		+ ",\n  \"telemetry_sensors\":" + PT_ReportJsonString( report.telemetrySensors.c_str() )
+		+ ",\n  \"telemetry_unavailable_reason\":" + ( report.telemetryFailure.IsEmpty() ? "null" : PT_ReportJsonString( report.telemetryFailure.c_str() ) )
+		+ ",\n  \"telemetry_unavailable_sensors\":" + PT_ReportJsonString( report.telemetryUnavailable.c_str() )
 		+ ",\n  \"telemetry_interval_ms\":1000,\n  \"gpu_stage_timing\":" + ( report.openGL ? "false" : "true" )
 		+ ",\n  \"requested_spp\":" + ( report.openGL ? "null" : Number( report.requestedSpp ) )
-		+ ",\n  \"capture_batch_spp\":" + ( report.openGL ? "null" : std::to_string( report.captureBatch ) )
-		+ ",\n  \"capture_target_dispatches\":" + ( report.openGL ? "null" : std::to_string( report.requestedSpp / report.captureBatch ) )
+		+ ",\n  \"capture_batch_spp\":" + ( report.openGL ? idStr( "null" ) : Integer( report.captureBatch ) )
+		+ ",\n  \"capture_target_dispatches\":" + ( report.openGL ? idStr( "null" ) : Integer( report.requestedSpp / report.captureBatch ) )
 		+ ",\n  \"requested_start_frame\":" + Number( report.startFrame )
 		+ ",\n  \"requested_end_frame\":" + Number( report.endFrame )
 		+ ",\n  \"completed_rows\":" + Number( report.rows )
@@ -203,7 +190,7 @@ static bool Metadata( const char *status, const char *reason ) {
 #ifdef _WIN32
 	const bool replaced = ok && MoveFileExA( from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH );
 #else
-	const bool replaced = ok && std::rename( from, to ) == 0;
+	const bool replaced = ok && rename( from, to ) == 0;
 #endif
 	if ( !replaced ) {
 		common->Warning( "PT capture report metadata could not be written/replaced" );
@@ -212,89 +199,112 @@ static bool Metadata( const char *status, const char *reason ) {
 	return replaced;
 }
 
-#ifdef HAVE_NVML_CAPTURE
+static idStr TelemetryHeader() {
+	idStr header = "elapsed_s,source_frame,phase";
+	for ( int i = 0; i < PT_GPU_SENSOR_COUNT; i++ ) { header += ","; header += ptGpuSensorColumns[i]; }
+	return header + ",sensor_errors\n";
+}
+
 static int SDLCALL TelemetryWorker( void * ) {
+	ptGpuTelemetrySample_t sample;
 	while ( !report.stopTelemetry.load() ) {
-		std::string errors;
-		auto sensor = [&]( const char *name, nvmlReturn_t result, double value ) {
-			if ( result == NVML_SUCCESS ) return Number( value );
-			if ( !errors.empty() ) errors += ";";
-			errors += std::string( name ) + ":" + Number( result );
-			report.sensorError.store( true );
-			return std::string();
-		};
+		sample.Clear();
+		if ( report.gpuTelemetry ) report.gpuTelemetry->Sample( sample );
+		if ( report.cpuTelemetry ) report.cpuTelemetry->Sample( sample );
+		if ( !sample.errors.IsEmpty() ) report.sensorError.store( true );
 		const double elapsed = ( Sys_MillisecondsPrecise() - report.start ) * 0.001;
-		std::string row = Number( elapsed ) + "," + Number( report.telemetryFrame.load() ) + ","
+		idStr row = Number( elapsed ) + "," + Number( report.telemetryFrame.load() ) + ","
 			+ PhaseName( report.phase.load() );
-		unsigned int value = 0;
-		nvmlUtilization_t use = {};
-		nvmlMemory_t mem = {};
-		unsigned long long reasons = 0;
-		nvmlReturn_t rc = report.temperature ? report.temperature( report.nvmlDevice, NVML_TEMPERATURE_GPU, &value ) : NVML_ERROR_NOT_SUPPORTED;
-		row += "," + sensor( "temperature", rc, value );
-		rc = report.power ? report.power( report.nvmlDevice, &value ) : NVML_ERROR_NOT_SUPPORTED;
-		row += "," + sensor( "power", rc, value * 0.001 );
-		rc = report.clock ? report.clock( report.nvmlDevice, NVML_CLOCK_SM, &value ) : NVML_ERROR_NOT_SUPPORTED;
-		row += "," + sensor( "sm_clock", rc, value );
-		rc = report.clock ? report.clock( report.nvmlDevice, NVML_CLOCK_MEM, &value ) : NVML_ERROR_NOT_SUPPORTED;
-		row += "," + sensor( "memory_clock", rc, value );
-		rc = report.utilization ? report.utilization( report.nvmlDevice, &use ) : NVML_ERROR_NOT_SUPPORTED;
-		row += "," + sensor( "utilization", rc, use.gpu );
-		rc = report.memory ? report.memory( report.nvmlDevice, &mem ) : NVML_ERROR_NOT_SUPPORTED;
-		row += "," + sensor( "memory", rc, (double)mem.used );
-		rc = report.fan ? report.fan( report.nvmlDevice, &value ) : NVML_ERROR_NOT_SUPPORTED;
-		row += "," + sensor( "fan", rc, value );
-		rc = report.throttle ? report.throttle( report.nvmlDevice, &reasons ) : NVML_ERROR_NOT_SUPPORTED;
-		row += "," + ( rc == NVML_SUCCESS ? std::to_string( reasons ) : sensor( "clock_reasons", rc, 0 ) );
-		row += "," + PT_ReportCsvString( errors ) + "\n";
+		for ( int i = 0; i < PT_GPU_SENSOR_COUNT; i++ ) {
+			row += ",";
+			if ( !sample.valid[i] ) continue;
+			row += i == PT_GPU_CLOCK_LIMIT_REASONS ? idStr::Format( "%llu", (unsigned long long)sample.value[i] ) : Number( sample.value[i] );
+		}
+		row += "," + PT_ReportCsvString( sample.errors ) + "\n";
 		if ( !Write( report.telemetry, row ) ) { report.telemetryWriteFailed.store( true ); break; }
 		for ( int i = 0; i < 10 && !report.stopTelemetry.load(); i++ ) SDL_Delay( 100 );
 	}
 	return 0;
 }
-#endif
+
+static void AppendItem( idStr &list, const char *separator, const idStr &item ) {
+	if ( item.IsEmpty() ) return;
+	if ( !list.IsEmpty() ) list += separator;
+	list += item;
+}
+
+static void CloseTelemetry() {
+	delete report.gpuTelemetry;
+	delete report.cpuTelemetry;
+	report.gpuTelemetry = report.cpuTelemetry = NULL;
+}
 
 static void StartTelemetry() {
 	report.telemetryStatus = "disabled";
+	report.telemetrySource.Clear();
+	report.telemetrySensors.Clear();
+	report.telemetryFailure.Clear();
+	report.telemetryUnavailable.Clear();
 	report.stopTelemetry.store( false );
 	report.telemetryWriteFailed.store( false );
 	report.sensorError.store( false );
 	if ( !r_ptCaptureTelemetry.GetBool() ) return;
 	report.telemetryStatus = "unavailable";
-#ifdef HAVE_NVML_CAPTURE
-#ifdef _WIN32
-	report.library = SDL_LoadObject( "nvml.dll" );
-#else
-	report.library = SDL_LoadObject( "libnvidia-ml.so.1" );
-#endif
-	if ( report.library && report.haveDevice ) {
-#define PT_NVML_LOAD(member, symbol) report.member = reinterpret_cast<decltype(report.member)>( SDL_LoadFunction( report.library, symbol ) )
-		PT_NVML_LOAD( init, "nvmlInit_v2" );
-		PT_NVML_LOAD( shutdown, "nvmlShutdown" );
-		PT_NVML_LOAD( deviceByPci, "nvmlDeviceGetHandleByPciBusId_v2" );
-		if ( report.init && report.shutdown && report.deviceByPci ) {
-			report.nvmlInitialized = report.init() == NVML_SUCCESS;
-			if ( report.nvmlInitialized && report.deviceByPci( report.device.pciBusId, &report.nvmlDevice ) == NVML_SUCCESS ) {
-				PT_NVML_LOAD( temperature, "nvmlDeviceGetTemperature" );
-				PT_NVML_LOAD( power, "nvmlDeviceGetPowerUsage" );
-				PT_NVML_LOAD( clock, "nvmlDeviceGetClockInfo" );
-				PT_NVML_LOAD( utilization, "nvmlDeviceGetUtilizationRates" );
-				PT_NVML_LOAD( memory, "nvmlDeviceGetMemoryInfo" );
-				PT_NVML_LOAD( fan, "nvmlDeviceGetFanSpeed" );
-				PT_NVML_LOAD( throttle, "nvmlDeviceGetCurrentClocksThrottleReasons" );
-#ifdef D3_SDL1
-				report.thread = SDL_CreateThread( TelemetryWorker, NULL );
-#else
-				report.thread = SDL_CreateThread( TelemetryWorker, "pt-telemetry", NULL );
-#endif
-				if ( report.thread ) { report.telemetryStatus = "sampling"; return; }
-				common->Warning( "PT telemetry thread could not start: %s", SDL_GetError() );
-			}
-		}
-#undef PT_NVML_LOAD
+
+	// match by the backend's PCI address; GL benchmarks only know the GL renderer/vendor
+	ptGpuTelemetryTarget_t target;
+	if ( report.haveDevice ) {
+		target.name = report.device.name;
+		target.pciBusId = report.device.pciBusId;
+		target.vendorId = report.device.vendorId ? report.device.vendorId : PT_GPU_VendorFromName( report.device.name );
+	} else if ( report.openGL ) {
+		const char *renderer = glConfig.renderer_string ? glConfig.renderer_string : "";
+		const char *vendor = glConfig.vendor_string ? glConfig.vendor_string : "";
+		target.name = renderer;
+		target.vendorId = PT_GPU_VendorFromName( idStr( vendor ) + " " + renderer );
 	}
+	idStr failure;
+	if ( target.name.IsEmpty() && target.pciBusId.IsEmpty() ) {
+		AppendItem( report.telemetryFailure, "; ", idStr( "gpu: device unknown" ) );
+	} else {
+		report.gpuTelemetry = PT_GPU_OpenTelemetry( target, failure );
+		if ( !report.gpuTelemetry ) AppendItem( report.telemetryFailure, "; ", "gpu: " + failure );
+	}
+	report.cpuTelemetry = PT_CPU_OpenTelemetry( failure );
+	if ( !report.cpuTelemetry ) AppendItem( report.telemetryFailure, "; ", "cpu: " + failure );
+
+	idGpuTelemetry *const providers[2] = { report.gpuTelemetry, report.cpuTelemetry };
+	for ( int i = 0; i < 2; i++ ) {
+		if ( !providers[i] ) continue;
+		AppendItem( report.telemetrySource, "+", providers[i]->Source() );
+		AppendItem( report.telemetrySensors, ",", PT_GPU_OfferedSensors( *providers[i] ) );
+		AppendItem( report.telemetryUnavailable, ";", providers[i]->Unavailable() );
+	}
+	if ( !report.telemetryUnavailable.IsEmpty() ) {
+		common->Printf( "[ptreport] telemetry sensors not available: %s\n", report.telemetryUnavailable.c_str() );
+	}
+
+	if ( report.gpuTelemetry || report.cpuTelemetry ) {
+#ifdef D3_SDL1
+		report.thread = SDL_CreateThread( TelemetryWorker, NULL );
+#else
+		report.thread = SDL_CreateThread( TelemetryWorker, "pt-telemetry", NULL );
 #endif
-	common->Warning( "GPU telemetry unavailable for this capture; rendering and frame reporting continue" );
+		if ( report.thread ) {
+			report.telemetryStatus = "sampling";
+			common->Printf( "[ptreport] telemetry: %s (%s)\n", report.telemetrySource.c_str(), report.telemetrySensors.c_str() );
+			if ( !report.gpuTelemetry ) {
+				common->Warning( "GPU telemetry unavailable for this capture (%s); CPU sensors are still sampled", report.telemetryFailure.c_str() );
+			}
+			return;
+		}
+		report.telemetryFailure = va( "telemetry thread could not start: %s", SDL_GetError() );
+		CloseTelemetry();
+		report.telemetrySource.Clear();
+		report.telemetrySensors.Clear();
+	}
+	common->Warning( "telemetry unavailable for this capture (%s); rendering and frame reporting continue",
+		report.telemetryFailure.c_str() );
 }
 
 static void StopTelemetry() {
@@ -302,17 +312,11 @@ static void StopTelemetry() {
 	if ( report.thread ) { SDL_WaitThread( report.thread, NULL ); report.thread = NULL; }
 	if ( report.telemetryWriteFailed.load() ) {
 		report.telemetryStatus = "write_error";
-		common->Warning( "PT GPU telemetry write failed; partial telemetry retained" );
+		common->Warning( "PT telemetry write failed; partial telemetry retained" );
 	} else if ( report.telemetryStatus == "sampling" ) {
 		report.telemetryStatus = report.sensorError.load() ? "complete_partial_sensors" : "complete";
 	}
-#ifdef HAVE_NVML_CAPTURE
-	if ( report.nvmlInitialized ) report.shutdown();
-	report.nvmlInitialized = false;
-	if ( report.library ) SDL_UnloadObject( report.library );
-	report.library = NULL;
-	report.nvmlDevice = NULL;
-#endif
+	CloseTelemetry();
 }
 
 bool R_PT_ReportActive() { return report.active; }
@@ -325,7 +329,7 @@ void R_PT_ReportSettings() {
 		const idKeyValue *kv = current.GetKeyVal( i );
 		const idKeyValue *old = report.effective.FindKey( kv->GetKey() );
 		if ( old && old->GetValue() == kv->GetValue() ) continue;
-		const std::string row = Number( ( Sys_MillisecondsPrecise() - report.start ) * 0.001 ) + ","
+		const idStr row = Number( ( Sys_MillisecondsPrecise() - report.start ) * 0.001 ) + ","
 			+ PhaseName( report.phase.load() ) + "," + PT_ReportCsvString( kv->GetKey().c_str() )
 			+ "," + PT_ReportCsvString( kv->GetValue().c_str() ) + "\n";
 		if ( !Write( report.settings, row ) ) {
@@ -358,27 +362,33 @@ bool R_PT_ReportBegin( const idCmdArgs &args, const char *mode, const char *sour
 	report.telemetryWriteFailed.store( false );
 	report.sensorError.store( false );
 	report.mode = report.openGL ? "benchmark" : mode; report.source = source;
-	std::string command;
+	idStr command;
 	for ( int i = 0; i < args.Argc(); ++i ) {
 		if ( i ) command += " ";
 		const bool redact = i > 0 && PT_ReportSensitiveName( args.Argv( i - 1 ) );
-		command += PT_ReportJsonString( redact ? "[redacted]" : PT_ReportRedactArgument( args.Argv( i ) ) );
+		command += PT_ReportJsonString( redact ? idStr( "[redacted]" ) : PT_ReportRedactArgument( args.Argv( i ) ) );
 	}
-	report.command = command.c_str();
+	report.command = command;
 	report.requestedSpp = requestedSpp; report.startFrame = startFrame; report.endFrame = endFrame;
 	report.captureBatch = report.openGL ? 1 : PT_BenchmarkBatchSize( requestedSpp, cvarSystem->GetCVarInteger( "r_ptSamplesPerPixel" ) );
 	report.rows = 0; report.totalGpu = report.totalWall = 0; report.start = Sys_MillisecondsPrecise();
-	report.startedUnix = std::time( NULL );
+	report.startedUnix = time( NULL );
 	report.phase.store( 0 ); report.telemetryFrame.store( startFrame );
 	report.original = Settings(); report.effective.Clear();
 	report.sourceFingerprint.Clear(); report.cpuModel.Clear();
 #ifdef __linux__
-	std::ifstream cpu( "/proc/cpuinfo" );
-	std::string line;
-	while ( std::getline( cpu, line ) ) {
-		if ( line.compare( 0, 10, "model name" ) == 0 && line.find( ':' ) != std::string::npos ) {
-			report.cpuModel = line.substr( line.find( ':' ) + 1 ).c_str(); report.cpuModel.StripLeading( ' ' ); break;
+	// /proc files report a zero size, so idFile cannot read them
+	if ( FILE *cpu = fopen( "/proc/cpuinfo", "r" ) ) {
+		char text[512];
+		while ( fgets( text, sizeof( text ), cpu ) ) {
+			const char *colon = strchr( text, ':' );
+			if ( idStr::Cmpn( text, "model name", 10 ) != 0 || !colon ) continue;
+			report.cpuModel = colon + 1;
+			report.cpuModel.StripLeading( ' ' );
+			report.cpuModel.StripTrailingWhitespace();
+			break;
 		}
+		fclose( cpu );
 	}
 #endif
 	report.haveDevice = false;
@@ -397,19 +407,20 @@ bool R_PT_ReportBegin( const idCmdArgs &args, const char *mode, const char *sour
 			}
 			fileSystem->CloseFile( demo );
 			if ( count < 0 ) common->Warning( "PT capture demo fingerprint read failed" );
-			else { std::ostringstream hex; hex << std::hex << hash; report.sourceFingerprint = hex.str().c_str(); }
+			else report.sourceFingerprint = idStr::Format( "%llx", (unsigned long long)hash );
 		} else common->Warning( "PT capture demo fingerprint unavailable" );
 	}
 	report.frames = fileSystem->OpenFileWrite( report.directory + "/frames.csv" );
 	report.settings = fileSystem->OpenFileWrite( report.directory + "/settings.csv" );
 	report.telemetry = fileSystem->OpenFileWrite( report.directory + "/telemetry.csv" );
-	for ( idFile *file : { report.frames, report.settings, report.telemetry } ) {
-		if ( file ) file->ForceFlush();
+	idFile *const files[3] = { report.frames, report.settings, report.telemetry };
+	for ( int i = 0; i < 3; i++ ) {
+		if ( files[i] ) files[i]->ForceFlush();
 	}
 	report.active = true;
 	const bool headers = Write( report.frames, "frame,source_frame,source_time_s,phase,spp,dispatches,trace_width,trace_height,image_width,image_height,gpu_ms,tracing_ms,denoising_ms,postprocess_ms,tonemap_ms,scene_ms,backend_wall_ms,readback_ms,screen_render_ms,image_save_ms,frame_wall_ms,compute_fps,end_to_end_fps,primary_samples_per_s,triangles,lights,backend_memory_bytes,image_file\n" )
 		&& Write( report.settings, "elapsed_s,phase,key,value\n" )
-		&& Write( report.telemetry, "elapsed_s,source_frame,phase,gpu_temperature_c,gpu_power_w,gpu_sm_clock_mhz,gpu_memory_clock_mhz,gpu_utilization_pct,gpu_memory_used_bytes,gpu_fan_pct,gpu_clock_limit_reasons,sensor_errors\n" );
+		&& Write( report.telemetry, TelemetryHeader() );
 	if ( !headers ) {
 		common->Warning( "PT capture report files could not be opened/written" );
 		report.failed = true; R_PT_ReportEnd( false, "report_open_failed" ); return false;
@@ -480,11 +491,11 @@ bool R_PT_ReportFrameEnd( const char *image, int imageWidth, int imageHeight, do
 	const double wall = Sys_MillisecondsPrecise() - report.frameStart;
 	const bool pt = report.dispatches > 0;
 	if ( !pt ) { report.width = imageWidth; report.height = imageHeight; }
-	const std::string gpu = pt ? Number( report.gpu ) : "";
+	const idStr gpu = pt ? Number( report.gpu ) : idStr();
 	const double computeFps = report.gpu > 0 ? 1000.0 / report.gpu : 0;
-	std::string row = std::to_string( report.rows + 1 ) + "," + std::to_string( report.sourceFrame ) + "," + Number( report.sourceTime )
-		+ "," + ( pt ? "pathtrace" : "opengl" ) + "," + std::to_string( report.spp ) + "," + std::to_string( report.dispatches )
-		+ "," + std::to_string( report.width ) + "," + std::to_string( report.height ) + "," + std::to_string( imageWidth ) + "," + std::to_string( imageHeight )
+	idStr row = Integer( report.rows + 1 ) + "," + Integer( report.sourceFrame ) + "," + Number( report.sourceTime )
+		+ "," + ( pt ? "pathtrace" : "opengl" ) + "," + Integer( report.spp ) + "," + Integer( report.dispatches )
+		+ "," + Integer( report.width ) + "," + Integer( report.height ) + "," + Integer( imageWidth ) + "," + Integer( imageHeight )
 		+ "," + gpu + "," + ( pt ? Number( report.path ) : "" ) + "," + ( pt ? Number( report.denoise ) : "" )
 		+ "," + ( pt ? Number( report.postprocess ) : "" ) + "," + ( pt ? Number( report.toneMap ) : "" )
 		+ "," + ( pt ? Number( report.scene ) : "" ) + "," + ( pt ? Number( report.backend ) : "" )
@@ -492,9 +503,9 @@ bool R_PT_ReportFrameEnd( const char *image, int imageWidth, int imageHeight, do
 		+ "," + Number( imageMilliseconds ) + "," + Number( wall ) + "," + ( pt ? Number( computeFps ) : "" )
 		+ "," + Number( wall > 0 ? 1000.0 / wall : 0 )
 		+ "," + ( pt ? Number( (double)report.width * report.height * report.spp * computeFps ) : "" )
-		+ "," + ( pt ? std::to_string( report.lastStats.numTriangles ) : "" )
-		+ "," + ( pt ? std::to_string( report.lastStats.numLights ) : "" )
-		+ "," + ( pt ? std::to_string( report.lastStats.deviceBytes ) : "" ) + "," + PT_ReportCsvString( image ) + "\n";
+		+ "," + ( pt ? Integer( report.lastStats.numTriangles ) : idStr() )
+		+ "," + ( pt ? Integer( report.lastStats.numLights ) : idStr() )
+		+ "," + ( pt ? idStr::Format( "%llu", (unsigned long long)report.lastStats.deviceBytes ) : idStr() ) + "," + PT_ReportCsvString( image ) + "\n";
 	if ( !Write( report.frames, row ) ) {
 		report.failed = true; common->Warning( "PT capture frame report write failed" ); return false;
 	}
@@ -516,8 +527,9 @@ void R_PT_ReportEnd( bool completed, const char *reason ) {
 	if ( report.settings && !report.failed ) R_PT_ReportSettings();
 	StopTelemetry();
 	if ( !Metadata( report.failed ? "report_error" : ( completed ? "completed" : "aborted" ), reason ) ) report.failed = true;
-	for ( idFile *file : { report.frames, report.settings, report.telemetry } ) {
-		if ( file ) fileSystem->CloseFile( file );
+	idFile *const files[3] = { report.frames, report.settings, report.telemetry };
+	for ( int i = 0; i < 3; i++ ) {
+		if ( files[i] ) fileSystem->CloseFile( files[i] );
 	}
 	report.frames = report.settings = report.telemetry = NULL;
 	report.original.Clear();

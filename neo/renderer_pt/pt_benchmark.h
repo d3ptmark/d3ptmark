@@ -1,8 +1,8 @@
 #ifndef __PT_BENCHMARK_H__
 #define __PT_BENCHMARK_H__
 
-#include <algorithm>
-#include <vector>
+#include "idlib/containers/List.h"
+#include "idlib/Lib.h"
 #include <stdlib.h>
 #include <errno.h>
 
@@ -19,7 +19,7 @@ inline bool PT_ParseBenchmarkSamples( const char *text, int &samples ) {
 
 // Equal-sized batches preserve the renderer's mean-of-dispatches accumulation.
 inline int PT_BenchmarkBatchSize( int samples, int presetBatch ) {
-	int batch = std::min( samples, std::max( 1, presetBatch ) );
+	int batch = Min( samples, Max( 1, presetBatch ) );
 	while ( samples % batch ) --batch;
 	return batch;
 }
@@ -29,7 +29,7 @@ inline bool PT_BenchmarkCanAdvance( bool imageSaved, double frameMilliseconds ) 
 }
 
 struct ptBenchmarkStatistics_t {
-	std::vector<double> frameMilliseconds;
+	idList<double> frameMilliseconds;
 	double gpuMilliseconds = 0;
 	double renderMilliseconds = 0;
 	int dispatches = 0;
@@ -42,23 +42,24 @@ struct ptBenchmarkStatistics_t {
 	}
 
 	void AddFrame( double milliseconds, double gpu, double render, int batches ) {
-		frameMilliseconds.push_back( milliseconds );
+		frameMilliseconds.Append( milliseconds );
 		gpuMilliseconds += gpu;
 		renderMilliseconds += render;
 		dispatches += batches;
 	}
 	double TotalMilliseconds() const {
 		double total = 0;
-		for ( double value : frameMilliseconds ) total += value;
+		for ( int i = 0; i < frameMilliseconds.Num(); i++ ) total += frameMilliseconds[i];
 		return total;
 	}
 	double Percentile( double fraction ) const {
-		if ( frameMilliseconds.empty() ) return 0;
-		std::vector<double> sorted = frameMilliseconds;
-		std::sort( sorted.begin(), sorted.end() );
-		const double index = fraction * ( sorted.size() - 1 );
-		const size_t lower = (size_t)index;
-		const size_t upper = std::min( lower + 1, sorted.size() - 1 );
+		if ( frameMilliseconds.Num() == 0 ) return 0;
+		idList<double> sorted = frameMilliseconds;
+		// idList's default comparison subtracts into an int, which truncates fractions
+		sorted.Sort( []( const double *a, const double *b ) { return *a < *b ? -1 : ( *a > *b ? 1 : 0 ); } );
+		const double index = fraction * ( sorted.Num() - 1 );
+		const int lower = (int)index;
+		const int upper = Min( lower + 1, sorted.Num() - 1 );
 		return sorted[lower] + ( sorted[upper] - sorted[lower] ) * ( index - lower );
 	}
 };

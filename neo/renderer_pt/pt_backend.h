@@ -21,7 +21,8 @@ typedef struct {
 
 struct ptBackendDeviceInfo_t {
 	char name[256];
-	char pciBusId[32];			// device matching only, not exported
+	char pciBusId[32];			// telemetry device matching only, not exported
+	unsigned int vendorId;		// PCI vendor id (0x10de, 0x1002, 0x8086), 0 if unknown
 	int driverVersion, runtimeVersion, multiprocessors, computeMajor, computeMinor;
 	size_t totalMemory;
 	char api[16];				// "opencl"; empty for CUDA, whose report format predates this field

@@ -644,8 +644,8 @@ render durations (including readback), image-write durations, FPS, and image pat
 and rendering model is `OpenGL`. GPU-stage timings, CUDA throughput, and PT sample
 targets are unavailable (blank CSV fields or JSON `null`), not invented GL measurements.
 `screen_render_ms` includes GL readback; `image_save_ms` covers encoding/writing.
-GPU telemetry is unavailable for GL captures because the existing sensor matching
-uses the CUDA device's PCI address; the report explicitly records this status.
+GPU telemetry for GL captures matches the device from the GL vendor/renderer strings
+(the only GPU of that vendor, or a matching name), since no PCI address is known.
 The existing `r_ptCaptureReport` and `r_ptCaptureTelemetry` switches also control
 GL benchmark reports. Reports and GL benchmarking work in CUDA-free builds too.
 
@@ -659,9 +659,44 @@ GL benchmark reports. Reports and GL benchmarking work in CUDA-free builds too.
   save time, wall time, FPS, primary samples/s, scene counts, memory and image path.
 * `settings.csv`: initial effective settings and subsequent changes with time/phase.
 * `telemetry.csv`: approximately 1 Hz GPU temperature, power, clocks, utilization,
-  memory, fan and clock-limiting reasons when the optional runtime NVML library is
-  available. The sampled device is matched to CUDA by PCI address; that address is
-  not exported. Unsupported sensors are blank, with error codes, not fabricated zeros.
+  memory, fan and clock-limiting reasons, plus CPU temperature, utilization and
+  package power (`cpu_temperature_c`, `cpu_utilization_pct`, `cpu_power_w`, the last
+  columns before `sensor_errors`), for CUDA, OpenCL and GL captures. Sources
+  (`pt_gpu_telemetry.cpp`, all loaded at runtime, nothing extra needed at build time):
+  * `nvml`: NVIDIA on Windows and Linux (driver's NVML library).
+  * `amdgpu_sysfs`, `i915_sysfs`, `xe_sysfs`: AMD and Intel on Linux (hwmon and driver
+    attributes). i915 and xe have no device-wide utilization or memory attribute, so
+    these come from this process's DRM clients (`/proc/self/fdinfo`, source suffix
+    `+fdinfo`): busiest engine and resident memory of the benchmark itself (local
+    memory on discrete GPUs, system memory on integrated ones). Integrated Intel GPUs
+    have no temperature sensor of their own (use `cpu_temperature_c`); their power
+    (RAPL `uncore`) is readable by root only.
+  * `d3dkmt`: any GPU on Windows 10 1803+ (WDDM 2.4): temperature, fan rpm, clocks and
+    power as a percentage of the board limit (`gpu_power_pct`; Windows has no
+    vendor-neutral GPU watts) from D3DKMT, utilization and memory from the
+    "GPU Engine"/"GPU Adapter Memory" counters (Task Manager's numbers).
+  * `linux_cpu`: `/proc/stat`, the `zenpower`/`k10temp` (Tdie, else Tctl) or `coretemp`
+    (Package id 0) hwmon, else the `x86_pkg_temp` thermal zone, and the powercap RAPL
+    package energy (`intel-rapl:N`, also used for AMD Zen). Kernels since the PLATYPUS
+    fix make `energy_uj` readable by root only; to sample CPU power as a user, run
+    `sudo chmod o+r /sys/class/powercap/intel-rapl:*/energy_uj` (until reboot; this
+    re-exposes the side channel the restriction closes).
+  * `windows_cpu`: `GetSystemTimes`, the "Thermal Zone Information" counters (ACPI
+    zones: firmware defined, usually near the package temperature, static on some
+    boards) and the "Energy Meter" `RAPL_Package*_PKG` counters (Windows 11, or an EMI
+    driver). No administrator rights needed.
+
+  The GPU is matched by PCI address (CUDA, or the OpenCL `cl_khr_pci_bus_info`,
+  NVIDIA and AMD attribute queries), then by name, then as the only GPU of its vendor;
+  the address is not exported. `gpu_sm_clock_mhz` is the graphics/shader clock on
+  non-NVIDIA GPUs. Sensors a source does not provide are blank without an error;
+  sensors that fail to read are blank and listed in `sensor_errors`, never zero-filled.
+  Rates (power from energy counters, CPU and Windows GPU utilization) are blank in the
+  first row. `metadata.json` records `telemetry_source` (e.g. `i915_sysfs+fdinfo+linux_cpu`),
+  `telemetry_sensors`, `telemetry_unavailable_sensors` (each blank column with the
+  reason, e.g. `cpu_power:/sys/class/powercap/intel-rapl:0/energy_uj is readable by
+  root only`) and `telemetry_unavailable_reason` when the GPU or CPU source could not
+  be opened at all.
 
 Compare/sequence images are kept inside their unique report directory so repeat
 runs cannot overwrite earlier report images. Benchmark images retain their

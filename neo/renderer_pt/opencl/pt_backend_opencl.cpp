@@ -186,7 +186,7 @@ private:
 	cl_context				context;
 	cl_command_queue		queue;
 	ptClProgram_t			program;
-	std::vector<cl_event>	events;			// profiling events of the current Render()
+	idList<cl_event>		events;			// profiling events of the current Render()
 	cl_ulong				maxAllocation;
 
 	// output
@@ -408,31 +408,32 @@ source / options / device / driver key.
 bool idPathTracerBackendOpenCL::BuildProgram() {
 	const bool useCache = r_ptOpenCLCache.GetBool() && fileSystem != NULL;
 	const idStr cachePath = va( "ptcache/opencl_%s.bin", PT_CL_ProgramKey( choice.device, NULL ).c_str() );
-	std::vector<unsigned char> cached, binary;
+	idList<byte> cached, binary;
 	if ( useCache ) {
 		void *buffer = NULL;
 		const int size = fileSystem->ReadFile( cachePath.c_str(), &buffer );
 		if ( size > 0 && buffer ) {
-			cached.assign( (const unsigned char *)buffer, (const unsigned char *)buffer + size );
+			cached.SetNum( size );
+			memcpy( cached.Ptr(), buffer, size );
 		}
 		if ( buffer ) fileSystem->FreeFile( buffer );
 	}
 
 	const int start = Sys_Milliseconds();
-	std::string log;
-	const cl_int err = PT_CL_CreateProgram( program, context, choice.device, NULL, cached.empty() ? NULL : &cached,
+	idStr log;
+	const cl_int err = PT_CL_CreateProgram( program, context, choice.device, NULL, cached.Num() == 0 ? NULL : &cached,
 		useCache ? &binary : NULL, log );
 	if ( err != CL_SUCCESS ) {
 		common->Warning( "OpenCL path tracer: program build failed: %s\n%s", PT_CL_ErrorString( err ), log.c_str() );
 		healthy = false;
 		return false;
 	}
-	if ( !binary.empty() ) {
+	if ( binary.Num() > 0 ) {
 		common->Printf( "OpenCL path tracer: compiled kernels in %.1f s\n", ( Sys_Milliseconds() - start ) * 0.001f );
-		fileSystem->WriteFile( cachePath.c_str(), &binary[0], (int)binary.size(), "fs_savepath" );
+		fileSystem->WriteFile( cachePath.c_str(), binary.Ptr(), binary.Num(), "fs_savepath" );
 	}
 
-	std::string layoutError;
+	idStr layoutError;
 	const cl_int layout = PT_CL_CheckLayout( program, queue, layoutError );
 	if ( layout != CL_SUCCESS ) {
 		common->Warning( "OpenCL path tracer: device struct layout check failed: %s %s\n",
@@ -880,7 +881,7 @@ with events recorded between its stages.
 ========================
 */
 float idPathTracerBackendOpenCL::ElapsedMs( size_t firstEvent, size_t endEvent ) const {
-	if ( endEvent <= firstEvent || endEvent > events.size() ) {
+	if ( endEvent <= firstEvent || endEvent > (size_t)events.Num() ) {
 		return 0.0f;
 	}
 	cl_ulong begin = 0, end = 0;
@@ -894,10 +895,10 @@ float idPathTracerBackendOpenCL::ElapsedMs( size_t firstEvent, size_t endEvent )
 }
 
 void idPathTracerBackendOpenCL::ReleaseEvents() {
-	for ( size_t i = 0; i < events.size(); i++ ) {
+	for ( int i = 0; i < events.Num(); i++ ) {
 		if ( events[i] ) clReleaseEvent( events[i] );
 	}
-	events.clear();
+	events.Clear();
 	program.events = NULL;
 }
 
@@ -979,7 +980,7 @@ bool idPathTracerBackendOpenCL::Render( const ptRenderParams_t &params ) {
 		denoise ? denoiser.signals[2].radiance : NULL, p );
 	if ( err != CL_SUCCESS ) { ReleaseEvents(); OnError( "PT_CL_LaunchPathTracing", err ); return false; }
 
-	const size_t markPath = events.size();		// CUDA: timerPath
+	const size_t markPath = (size_t)events.Num();		// CUDA: timerPath
 	accumFrames++;
 	cl_mem hdrBuffer = d_accum;
 	if ( denoise ) {
@@ -988,7 +989,7 @@ bool idPathTracerBackendOpenCL::Render( const ptRenderParams_t &params ) {
 		if ( err != CL_SUCCESS ) { ReleaseEvents(); OnError( "PT_CL_LaunchDenoising", err ); return false; }
 		hdrBuffer = d_filtered;
 	}
-	const size_t markDenoise = events.size();	// CUDA: timerDenoise
+	const size_t markDenoise = (size_t)events.Num();	// CUDA: timerDenoise
 	size_t markPostprocess = markDenoise;		// CUDA: timerPostprocess
 	const bool hasPostprocess = accumulate && p.denoiseDebug == 0 && ( p.bloomStrength > 0.0f || p.lensFlareStrength > 0.0f );
 	if ( denoise && p.denoiseDebug >= 1 && p.denoiseDebug <= 4 ) {
@@ -1001,14 +1002,14 @@ bool idPathTracerBackendOpenCL::Render( const ptRenderParams_t &params ) {
 			if ( err != CL_SUCCESS ) { ReleaseEvents(); OnError( "PT_CL_LaunchPostprocess", err ); return false; }
 			hdrBuffer = postprocess.output;
 		}
-		markPostprocess = events.size();
+		markPostprocess = (size_t)events.Num();
 		err = PT_CL_LaunchToneMapping( program, queue, hdrBuffer, d_output, p.width, p.height, p.exposure, p.gamma, p.toneMapMode );
 		if ( err != CL_SUCCESS ) { ReleaseEvents(); OnError( "PT_CL_LaunchToneMapping", err ); return false; }
 	}
 
 	err = clFinish( queue );
 	if ( err != CL_SUCCESS ) { ReleaseEvents(); OnError( "clFinish", err ); return false; }
-	const size_t markEnd = events.size();		// CUDA: timerStop
+	const size_t markEnd = (size_t)events.Num();		// CUDA: timerStop
 	traceMs = ElapsedMs( 0, markEnd );
 	pathMs = ElapsedMs( 0, markPath );
 	denoiseMs = ElapsedMs( markPath, markDenoise );
@@ -1093,13 +1094,22 @@ typedef struct {
 #define PT_CL_DEVICE_PCI_BUS_ID_NV		0x4008
 #define PT_CL_DEVICE_PCI_SLOT_ID_NV		0x4009
 #define PT_CL_DEVICE_PCI_DOMAIN_ID_NV	0x400A
+#define PT_CL_DEVICE_TOPOLOGY_AMD		0x4037
+#define PT_CL_DEVICE_TOPOLOGY_TYPE_PCIE_AMD	1
+
+// cl_device_topology_amd from cl_ext.h (cl_amd_device_attribute_query)
+typedef union {
+	struct { cl_uint type; cl_uint data[5]; } raw;
+	struct { cl_uint type; cl_char unused[17]; cl_char bus; cl_char device; cl_char function; } pcie;
+} ptClDeviceTopologyAmd_t;
 
 /*
 ========================
 PT_OpenCL_GetDeviceInfo
 
-PCI bus ids use NVML's domain:bus:device.function form, so the capture
-report's NVML telemetry also works for NVIDIA GPUs driven through OpenCL.
+PCI bus ids use the domain:bus:device.function form, so the capture
+report's GPU telemetry (NVML, Linux sysfs, Windows D3DKMT) samples the
+device driven through OpenCL.
 ========================
 */
 bool PT_OpenCL_GetDeviceInfo( ptBackendDeviceInfo_t &info ) {
@@ -1112,9 +1122,11 @@ bool PT_OpenCL_GetDeviceInfo( ptBackendDeviceInfo_t &info ) {
 	idStr::Copynz( info.driverString, PT_CL_DeviceString( id, CL_DRIVER_VERSION ).c_str(), sizeof( info.driverString ) );
 	idStr::Copynz( info.apiVersion, PT_CL_DeviceString( id, CL_DEVICE_VERSION ).c_str(), sizeof( info.apiVersion ) );
 	cl_ulong memory = 0;
-	cl_uint units = 0;
+	cl_uint units = 0, vendor = 0;
 	clGetDeviceInfo( id, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof( memory ), &memory, NULL );
 	clGetDeviceInfo( id, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof( units ), &units, NULL );
+	// the PCI vendor id for GPUs on AMD, Intel and NVIDIA platforms
+	if ( clGetDeviceInfo( id, CL_DEVICE_VENDOR_ID, sizeof( vendor ), &vendor, NULL ) == CL_SUCCESS && vendor <= 0xffff ) info.vendorId = vendor;
 	info.totalMemory = (size_t)memory;
 	info.multiprocessors = (int)units;
 	int major = 0, minor = 0;
@@ -1135,6 +1147,14 @@ bool PT_OpenCL_GetDeviceInfo( ptBackendDeviceInfo_t &info ) {
 			&& clGetDeviceInfo( id, PT_CL_DEVICE_PCI_SLOT_ID_NV, sizeof( slot ), &slot, NULL ) == CL_SUCCESS ) {
 			clGetDeviceInfo( id, PT_CL_DEVICE_PCI_DOMAIN_ID_NV, sizeof( domain ), &domain, NULL );
 			idStr::snPrintf( info.pciBusId, sizeof( info.pciBusId ), "%08x:%02x:%02x.%x", domain, bus, slot >> 3, slot & 7 );
+		}
+	} else if ( extensions.Find( "cl_amd_device_attribute_query" ) >= 0 ) {
+		ptClDeviceTopologyAmd_t topology;
+		memset( &topology, 0, sizeof( topology ) );
+		if ( clGetDeviceInfo( id, PT_CL_DEVICE_TOPOLOGY_AMD, sizeof( topology ), &topology, NULL ) == CL_SUCCESS
+			&& topology.raw.type == PT_CL_DEVICE_TOPOLOGY_TYPE_PCIE_AMD ) {
+			idStr::snPrintf( info.pciBusId, sizeof( info.pciBusId ), "%08x:%02x:%02x.%x", 0,
+				(unsigned char)topology.pcie.bus, (unsigned char)topology.pcie.device, (unsigned char)topology.pcie.function );
 		}
 	}
 	return true;

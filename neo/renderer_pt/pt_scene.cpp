@@ -5,7 +5,6 @@
 #include "renderer/RenderWorld_local.h"
 #endif
 
-#include <new>
 
 /*
 ===============================================================================
@@ -136,7 +135,7 @@ idPathTracerScene::ReleasePendingTextures
 */
 void idPathTracerScene::ReleasePendingTextures() {
 	for ( int i = 0; i < pendingTextures.Num(); i++ ) {
-		delete[] pendingTextures[i].rgba;
+		Mem_Free( pendingTextures[i].rgba );
 	}
 	pendingTextures.Clear();
 }
@@ -720,7 +719,7 @@ int idPathTracerScene::AddTexture( const idImage *image ) {
 	ptTextureUpload_t upload;
 	upload.width = width;
 	upload.height = height;
-	upload.rgba = new (std::nothrow) unsigned char[(size_t)width * height * 4];
+	upload.rgba = (unsigned char *)Mem_Alloc( width * height * 4 );	// at most 64 MiB (PT_MAX_TEXTURE_SIZE)
 	if ( !upload.rgba ) {
 		qglBindTexture( GL_TEXTURE_2D, oldTexture );
 		return -1;

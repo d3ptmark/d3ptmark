@@ -28,8 +28,9 @@
 // clXxx calls go through runtime-loaded entry points, see PT_CL_Load()
 #include "renderer_pt/opencl/pt_opencl_loader.h"
 
-#include <string>
-#include <vector>
+#include "sys/platform.h"
+#include "idlib/Str.h"
+#include "idlib/containers/List.h"
 
 #include "renderer_pt/opencl/pt_opencl_shared.h"
 
@@ -70,7 +71,7 @@ struct ptClProgram_t {
 	cl_kernel				kernels[PT_CL_KERNEL_COUNT];
 	size_t					maxWorkGroup[PT_CL_KERNEL_COUNT];
 	size_t					sortWorkGroup;		// PT_CL_SORT_WG the program was built with
-	std::vector<cl_event> *	events;				// when set, every enqueued command appends its event
+	idList<cl_event> *		events;				// when set, every enqueued command appends its event
 };
 
 struct ptClSceneView_t {
@@ -114,21 +115,21 @@ const char *	PT_CL_ErrorString( cl_int error );
 const char *	PT_CL_ProgramSource();
 
 // Build options derived from the device and the host's compile time switches (PT_PHYSICAL).
-std::string		PT_CL_BuildOptions( cl_device_id device );
+idStr			PT_CL_BuildOptions( cl_device_id device );
 
 // Stable 64 bit key of source + extraSource + options + device + driver, for binary caches.
-std::string		PT_CL_ProgramKey( cl_device_id device, const char *extraSource );
+idStr			PT_CL_ProgramKey( cl_device_id device, const char *extraSource );
 
 // Builds the program (from cachedBinary when it is valid, otherwise from source),
 // creates every kernel and, when binaryOut is set, returns the device binary.
 // extraSource is appended to the embedded program (regression tests add kernels).
 cl_int			PT_CL_CreateProgram( ptClProgram_t &prog, cl_context context, cl_device_id device, const char *extraSource,
-									 const std::vector<unsigned char> *cachedBinary, std::vector<unsigned char> *binaryOut,
-									 std::string &log );
+									 const idList<byte> *cachedBinary, idList<byte> *binaryOut,
+									 idStr &log );
 void			PT_CL_DestroyProgram( ptClProgram_t &prog );
 
 // Runs PT_LayoutKernel and compares the device struct sizes against the host's.
-cl_int			PT_CL_CheckLayout( ptClProgram_t &prog, cl_command_queue queue, std::string &error );
+cl_int			PT_CL_CheckLayout( ptClProgram_t &prog, cl_command_queue queue, idStr &error );
 
 // 2D launch over width x height with 16 x 16 tiles (smaller if the kernel can not run them).
 cl_int			PT_CL_Launch2D( ptClProgram_t &prog, cl_command_queue queue, int kernel, int width, int height );

@@ -812,6 +812,7 @@ bool PT_CUDA_GetDeviceInfo( ptBackendDeviceInfo_t &info ) {
 		|| cudaDriverGetVersion( &info.driverVersion ) != cudaSuccess
 		|| cudaRuntimeGetVersion( &info.runtimeVersion ) != cudaSuccess ) return false;
 	idStr::Copynz( info.name, props.name, sizeof( info.name ) );
+	info.vendorId = 0x10de;
 	info.totalMemory = props.totalGlobalMem;
 	info.multiprocessors = props.multiProcessorCount;
 	info.computeMajor = props.major;

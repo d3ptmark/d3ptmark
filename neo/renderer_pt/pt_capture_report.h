@@ -1,8 +1,10 @@
 #ifndef __PT_CAPTURE_REPORT_H__
 #define __PT_CAPTURE_REPORT_H__
 
-#include <string>
 #include <climits>
+
+#include "sys/platform.h"
+#include "idlib/Str.h"
 
 inline bool PT_ParseCaptureFrame( const char *text, int &frame ) {
 	if ( !text || !*text ) return false;
@@ -15,37 +17,38 @@ inline bool PT_ParseCaptureFrame( const char *text, int &frame ) {
 	return true;
 }
 
-inline bool PT_ReportSensitiveName( std::string name ) {
-	for ( char &c : name ) if ( c >= 'A' && c <= 'Z' ) c += 'a' - 'A';
-	return name.find( "password" ) != std::string::npos || name.find( "passwd" ) != std::string::npos
-		|| name.find( "token" ) != std::string::npos || name.find( "secret" ) != std::string::npos
-		|| name.find( "rcon" ) != std::string::npos;
+inline bool PT_ReportSensitiveName( const char *name ) {
+	const idStr text( name );
+	return text.Find( "password", false ) >= 0 || text.Find( "passwd", false ) >= 0
+		|| text.Find( "token", false ) >= 0 || text.Find( "secret", false ) >= 0
+		|| text.Find( "rcon", false ) >= 0;
 }
 
-inline std::string PT_ReportRedactArgument( const std::string &argument ) {
-	const size_t equals = argument.find( '=' );
-	if ( equals != std::string::npos && PT_ReportSensitiveName( argument.substr( 0, equals ) ) )
-		return argument.substr( 0, equals + 1 ) + "[redacted]";
+inline idStr PT_ReportRedactArgument( const idStr &argument ) {
+	const int equals = argument.Find( '=' );
+	if ( equals >= 0 && PT_ReportSensitiveName( argument.Left( equals ).c_str() ) )
+		return argument.Left( equals + 1 ) + "[redacted]";
 	return argument;
 }
 
-inline std::string PT_ReportJsonString( const std::string &text ) {
-	std::string result = "\"";
+inline idStr PT_ReportJsonString( const idStr &text ) {
+	idStr result = "\"";
 	const char *hex = "0123456789abcdef";
-	for ( unsigned char c : text ) {
-		if ( c == '"' || c == '\\' ) { result += '\\'; result += c; }
+	for ( int i = 0; i < text.Length(); i++ ) {
+		const unsigned char c = (unsigned char)text[i];
+		if ( c == '"' || c == '\\' ) { result += '\\'; result += (char)c; }
 		else if ( c < 32 ) {
 			result += "\\u00"; result += hex[c >> 4]; result += hex[c & 15];
-		} else result += c;
+		} else result += (char)c;
 	}
 	return result + '"';
 }
 
-inline std::string PT_ReportCsvString( const std::string &text ) {
-	std::string result = "\"";
-	for ( char c : text ) {
-		if ( c == '"' ) result += '"';
-		result += c;
+inline idStr PT_ReportCsvString( const idStr &text ) {
+	idStr result = "\"";
+	for ( int i = 0; i < text.Length(); i++ ) {
+		if ( text[i] == '"' ) result += '"';
+		result += text[i];
 	}
 	return result + '"';
 }

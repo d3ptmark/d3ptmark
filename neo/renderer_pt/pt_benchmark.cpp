@@ -54,7 +54,7 @@ void R_EndBenchmark( bool completed ) {
 	benchmark.active = false;
 	R_PT_ReportEnd( completed, completed ? "" : "benchmark_aborted" );
 	const double seconds = ( Sys_MillisecondsPrecise() - benchmark.start ) * 0.001;
-	const size_t frames = benchmark.stats.frameMilliseconds.size();
+	const int frames = benchmark.stats.frameMilliseconds.Num();
 	common->Printf( "\n=== %s Benchmark %s ===\n", benchmark.openGL ? "OpenGL" : "Path Tracer", completed ? "Complete" : "Aborted (partial results)" );
 	common->Printf( "  Demo: %s\n  Completed demo frames: %zu\n", benchmark.demo.c_str(), frames );
 	if ( !benchmark.openGL ) common->Printf( "  Samples/pixel/frame: %d (batch %d)\n", benchmark.samples, benchmark.batch );
@@ -94,8 +94,8 @@ void R_BenchmarkNewFrame() {
 	benchmark.frameBatches = 0;
 	benchmark.frameGpu = benchmark.frameRender = 0;
 	benchmark.frameStart = Sys_MillisecondsPrecise();
-	R_PT_ReportFrameBegin( (int)benchmark.stats.frameMilliseconds.size() + 1,
-		benchmark.stats.frameMilliseconds.size() / 30.0, benchmark.openGL ? "opengl" : "pathtrace" );
+	R_PT_ReportFrameBegin( benchmark.stats.frameMilliseconds.Num() + 1,
+		benchmark.stats.frameMilliseconds.Num() / 30.0, benchmark.openGL ? "opengl" : "pathtrace" );
 #ifdef HAVE_PATHTRACER
 	if ( !benchmark.openGL && RB_PT_GetBackend() ) RB_PT_GetBackend()->ResetAccumulation();
 #endif
@@ -113,9 +113,9 @@ bool R_BenchmarkAdvance() {
 	}
 	benchmark.stats.AddFrame( Sys_MillisecondsPrecise() - benchmark.frameStart, benchmark.frameGpu,
 		benchmark.frameRender, benchmark.frameBatches );
-	if ( benchmark.stats.frameMilliseconds.size() % 30 == 0 ) {
-		if ( benchmark.openGL ) common->Printf( "[glbench] %zu demo frames completed\n", benchmark.stats.frameMilliseconds.size() );
-		else common->Printf( "[ptbench] %zu demo frames completed at %d spp\n", benchmark.stats.frameMilliseconds.size(), benchmark.samples );
+	if ( benchmark.stats.frameMilliseconds.Num() % 30 == 0 ) {
+		if ( benchmark.openGL ) common->Printf( "[glbench] %d demo frames completed\n", benchmark.stats.frameMilliseconds.Num() );
+		else common->Printf( "[ptbench] %d demo frames completed at %d spp\n", benchmark.stats.frameMilliseconds.Num(), benchmark.samples );
 	}
 	benchmark.ready = false;
 	return true;
@@ -169,8 +169,9 @@ void R_BenchmarkCaptureGL() {
 	qglReadBuffer( GL_BACK );
 	qglPixelStorei( GL_PACK_ALIGNMENT, 1 );
 	const int rowBytes = benchmark.width * 3;
-	std::vector<byte> pixels( (size_t)rowBytes * benchmark.height );
-	qglReadPixels( 0, 0, benchmark.width, benchmark.height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data() );
+	idList<byte> pixels;
+	pixels.SetNum( rowBytes * benchmark.height );
+	qglReadPixels( 0, 0, benchmark.width, benchmark.height, GL_RGB, GL_UNSIGNED_BYTE, pixels.Ptr() );
 	qglReadBuffer( oldReadBuffer );
 	qglPixelStorei( GL_PACK_ALIGNMENT, oldPackAlignment );
 	if ( !R_BenchmarkCheckGLErrors( "readback/state restoration failed; aborting" ) ) {
@@ -178,15 +179,15 @@ void R_BenchmarkCaptureGL() {
 		return;
 	}
 	for ( int y = 0; y < benchmark.height / 2; y++ ) {
-		std::swap_ranges( pixels.begin() + y * rowBytes, pixels.begin() + ( y + 1 ) * rowBytes,
-			pixels.begin() + ( benchmark.height - y - 1 ) * rowBytes );
+		byte *top = pixels.Ptr() + y * rowBytes, *bottom = pixels.Ptr() + ( benchmark.height - y - 1 ) * rowBytes;
+		for ( int x = 0; x < rowBytes; x++ ) idSwap( top[x], bottom[x] );
 	}
 	benchmark.frameRender = Sys_MillisecondsPrecise() - benchmark.screenStart;
 	const idStr image = va( "%s/frame_%06d.%s", benchmark.imageDirectory.c_str(),
 		benchmark.stats.imagesWritten + 1, PT_BenchmarkImageExtension( benchmark.imageFormat ) );
 	const double start = Sys_MillisecondsPrecise();
 	R_PT_ReportPhase( "image_save" );
-	if ( !R_WriteScreenshotImage( image, pixels.data(), benchmark.width, benchmark.height, benchmark.imageFormat ) ) {
+	if ( !R_WriteScreenshotImage( image, pixels.Ptr(), benchmark.width, benchmark.height, benchmark.imageFormat ) ) {
 		fileSystem->RemoveFile( image );
 		common->Warning( "GL benchmark could not save frame %d; aborting", benchmark.stats.imagesWritten + 1 );
 		R_EndBenchmark( false );

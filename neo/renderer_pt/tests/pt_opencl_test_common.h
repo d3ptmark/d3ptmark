@@ -15,14 +15,19 @@
 ===============================================================================
 */
 
-#include "renderer_pt/opencl/pt_opencl_device.h"
-
+// standard headers before idlib (pulled in by pt_opencl_device.h): idlib/Str.h
+// redirects snprintf, which breaks MSVC's <cstdio>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
+
+#include "renderer_pt/opencl/pt_opencl_device.h"
+
+class idCommon;
+idCommon *common = NULL;	// pt_opencl_kernels.cpp uses idlib, which links against the engine global
 
 struct ptClTest_t {
 	cl_context			context;
@@ -83,13 +88,13 @@ static inline int PT_CL_TestInit( const char *testName, const char *extraSource 
 	CL_CHECK( error );
 	clTest.queue = clCreateCommandQueue( clTest.context, clTest.device, 0, &error );
 	CL_CHECK( error );
-	std::string log;
+	idStr log;
 	error = PT_CL_CreateProgram( clTest.program, clTest.context, clTest.device, extraSource, NULL, NULL, log );
 	if ( error != CL_SUCCESS ) {
 		std::fprintf( stderr, "program build failed: %s\n%s\n", PT_CL_ErrorString( error ), log.c_str() );
 		std::exit( 1 );
 	}
-	std::string layout;
+	idStr layout;
 	error = PT_CL_CheckLayout( clTest.program, clTest.queue, layout );
 	if ( error != CL_SUCCESS ) {
 		std::fprintf( stderr, "layout check failed: %s %s\n", PT_CL_ErrorString( error ), layout.c_str() );

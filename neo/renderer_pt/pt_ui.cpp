@@ -1,8 +1,5 @@
 // STL headers must come before idlib: idlib/Str.h redefines snprintf/vsnprintf
 // (use_idStr_snPrintf), which breaks the using-declarations in MSVC's <cstdio>.
-#include <algorithm>
-#include <cmath>
-#include <vector>
 
 #include "sys/platform.h"
 #include "framework/Common.h"
@@ -16,7 +13,7 @@
 #ifndef IMGUI_DISABLE
 
 static const char *ptRequestedTab = NULL;
-static std::vector<idCVar *> ptUIVariables;
+static idList<idCVar *> ptUIVariables;
 static const char *ptUIUsage = "usage: r_ptUI [quality|settings"
 #ifdef PT_PHYSICAL
 	"|physical"
@@ -30,14 +27,14 @@ static void PT_CollectUIVariable( const char *name ) {
 		common->Warning( "path tracer UI could not find registered CVar '%s'", name );
 		return;
 	}
-	ptUIVariables.push_back( var );
+	ptUIVariables.Append( var );
 }
 
 static void PT_RefreshUIVariables() {
-	ptUIVariables.clear();
+	ptUIVariables.Clear();
 	cvarSystem->CommandCompletion( PT_CollectUIVariable );
-	std::sort( ptUIVariables.begin(), ptUIVariables.end(), []( const idCVar *a, const idCVar *b ) {
-		return idStr::Icmp( a->GetName(), b->GetName() ) < 0;
+	ptUIVariables.Sort( []( idCVar *const *a, idCVar *const *b ) {
+		return idStr::Icmp( ( *a )->GetName(), ( *b )->GetName() );
 	} );
 }
 
@@ -82,7 +79,7 @@ static void PT_DrawUIVariable( idCVar &var ) {
 			? ImGui::SliderFloat( "##value", &value, var.GetMinValue(), var.GetMaxValue(), "%.6g", ImGuiSliderFlags_AlwaysClamp )
 			: ImGui::InputFloat( "##value", &value, 0, 0, "%.6g" );
 		if ( changed ) {
-			if ( std::isfinite( value ) ) var.SetFloat( value );
+			if ( !FLOAT_IS_NAN( value ) ) var.SetFloat( value );	// also rejects infinities
 			else common->Warning( "path tracer UI requires a finite value for '%s'", var.GetName() );
 		}
 	} else if ( var.GetValueStrings() ) {
@@ -93,10 +90,11 @@ static void PT_DrawUIVariable( idCVar &var ) {
 			ImGui::EndCombo();
 		}
 	} else {
-		std::vector<char> value( idStr::Length( var.GetString() ) + 512 );
-		idStr::Copynz( value.data(), var.GetString(), (int)value.size() );
-		if ( ImGui::InputText( "##value", value.data(), value.size(), ImGuiInputTextFlags_EnterReturnsTrue ) ) {
-			var.SetString( value.data() );
+		idList<char> value;
+		value.SetNum( idStr::Length( var.GetString() ) + 512 );
+		idStr::Copynz( value.Ptr(), var.GetString(), value.Num() );
+		if ( ImGui::InputText( "##value", value.Ptr(), (size_t)value.Num(), ImGuiInputTextFlags_EnterReturnsTrue ) ) {
+			var.SetString( value.Ptr() );
 		}
 	}
 	if ( ImGui::IsItemHovered( ImGuiHoveredFlags_AllowWhenDisabled ) ) {
@@ -129,7 +127,8 @@ static void PT_DrawSettingsTab( bool capturing ) {
 	ImGui::BeginDisabled( capturing );
 	if ( ImGui::BeginChild( "variables" ) ) {
 		if ( ImGui::BeginTable( "settings", 2, ImGuiTableFlags_SizingStretchProp ) ) {
-			for ( idCVar *var : ptUIVariables ) {
+			for ( int v = 0; v < ptUIVariables.Num(); v++ ) {
+				idCVar *var = ptUIVariables[v];
 				const idStr searchable = idStr( var->GetName() ) + " " + var->GetDescription();
 				if ( filter.PassFilter( searchable.c_str() ) ) PT_DrawUIVariable( *var );
 			}
@@ -188,7 +187,7 @@ void R_PT_OpenUI( const char *tab ) {
 	ptRequestedTab = requested;
 	PT_RefreshUIVariables();
 	OpenWindow( D3_ImGuiWin_PathTracer );
-	common->Printf( "Path tracer UI opened%s%s (%d CVars)\n", tab ? ": " : "", tab ? tab : "", (int)ptUIVariables.size() );
+	common->Printf( "Path tracer UI opened%s%s (%d CVars)\n", tab ? ": " : "", tab ? tab : "", ptUIVariables.Num() );
 }
 #endif
 

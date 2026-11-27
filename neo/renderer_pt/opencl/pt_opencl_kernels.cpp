@@ -14,9 +14,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <limits>
-
 #include "renderer_pt/opencl/pt_opencl_device.h"
+#include "idlib/math/Math.h"
 
 // generated at build time from the pt_cl_*.cl sources
 #include "pt_opencl_program.h"
@@ -111,13 +110,14 @@ const char *PT_CL_ProgramSource() {
 	return ptOpenCLProgram;
 }
 
-static std::string PT_CL_DeviceString( cl_device_id device, cl_device_info param ) {
+static idStr PT_CL_DeviceString( cl_device_id device, cl_device_info param ) {
 	size_t size = 0;
 	if ( clGetDeviceInfo( device, param, 0, NULL, &size ) != CL_SUCCESS || size == 0 ) return "";
-	std::string value( size, '\0' );
-	clGetDeviceInfo( device, param, size, &value[0], NULL );
-	while ( !value.empty() && value[value.size() - 1] == '\0' ) value.resize( value.size() - 1 );
-	return value;
+	idList<char> value;
+	value.SetNum( (int)size + 1 );
+	value[(int)size] = '\0';
+	if ( clGetDeviceInfo( device, param, size, value.Ptr(), NULL ) != CL_SUCCESS ) return "";
+	return value.Ptr();	// stops at the terminating NUL
 }
 
 static size_t PT_CL_SortWorkGroup( cl_device_id device ) {
@@ -131,8 +131,8 @@ static size_t PT_CL_SortWorkGroup( cl_device_id device ) {
 #define PT_CL_INTEL_LARGE_GRF	"-cl-intel-256-GRF-per-thread"
 
 static bool PT_CL_IsIntel( cl_device_id device ) {
-	const std::string vendor = PT_CL_DeviceString( device, CL_DEVICE_VENDOR );
-	return vendor.find( "Intel" ) != std::string::npos || vendor.find( "intel" ) != std::string::npos;
+	const idStr vendor = PT_CL_DeviceString( device, CL_DEVICE_VENDOR );
+	return vendor.Find( "Intel" ) >= 0 || vendor.Find( "intel" ) >= 0;
 }
 
 /*
@@ -144,10 +144,10 @@ and square root (-prec-div=true -prec-sqrt=true). No fast math, exactly like
 the CUDA build.
 ========================
 */
-std::string PT_CL_BuildOptions( cl_device_id device ) {
-	std::string options = "-cl-std=CL1.2";
+idStr PT_CL_BuildOptions( cl_device_id device ) {
+	idStr options = "-cl-std=CL1.2";
 	char group[64];
-	snprintf( group, sizeof( group ), " -DPT_CL_SORT_WG=%u", (unsigned int)PT_CL_SortWorkGroup( device ) );
+	idStr::snPrintf( group, sizeof( group ), " -DPT_CL_SORT_WG=%u", (unsigned int)PT_CL_SortWorkGroup( device ) );
 	options += group;
 #ifdef PT_PHYSICAL
 	options += " -DPT_PHYSICAL";
@@ -168,15 +168,15 @@ std::string PT_CL_BuildOptions( cl_device_id device ) {
 	return options;
 }
 
-static unsigned long long PT_CL_Hash( unsigned long long hash, const std::string &text ) {
-	for ( size_t i = 0; i < text.size(); i++ ) {
+static unsigned long long PT_CL_Hash( unsigned long long hash, const idStr &text ) {
+	for ( int i = 0; i < text.Length(); i++ ) {
 		hash ^= (unsigned char)text[i];
 		hash *= 1099511628211ULL;
 	}
 	return hash;
 }
 
-std::string PT_CL_ProgramKey( cl_device_id device, const char *extraSource ) {
+idStr PT_CL_ProgramKey( cl_device_id device, const char *extraSource ) {
 	unsigned long long hash = 14695981039346656037ULL;
 	hash = PT_CL_Hash( hash, PT_CL_ProgramSource() );
 	hash = PT_CL_Hash( hash, extraSource ? extraSource : "" );
@@ -186,7 +186,7 @@ std::string PT_CL_ProgramKey( cl_device_id device, const char *extraSource ) {
 	hash = PT_CL_Hash( hash, PT_CL_DeviceString( device, CL_DRIVER_VERSION ) );
 	hash = PT_CL_Hash( hash, PT_CL_DeviceString( device, CL_DEVICE_VERSION ) );
 	char key[32];
-	snprintf( key, sizeof( key ), "%016llx", hash );
+	idStr::snPrintf( key, sizeof( key ), "%016llx", hash );
 	return key;
 }
 
@@ -195,7 +195,7 @@ std::string PT_CL_ProgramKey( cl_device_id device, const char *extraSource ) {
 PT_CL_CreateProgram
 ========================
 */
-static cl_int PT_CL_BuildFromSource( ptClProgram_t &prog, const char *extraSource, const std::string &options ) {
+static cl_int PT_CL_BuildFromSource( ptClProgram_t &prog, const char *extraSource, const idStr &options ) {
 	const char *sources[2] = { PT_CL_ProgramSource(), extraSource ? extraSource : "" };
 	cl_int error = CL_SUCCESS;
 	prog.program = clCreateProgramWithSource( prog.context, 2, sources, NULL, &error );
@@ -203,32 +203,35 @@ static cl_int PT_CL_BuildFromSource( ptClProgram_t &prog, const char *extraSourc
 	return clBuildProgram( prog.program, 1, &prog.device, options.c_str(), NULL, NULL );
 }
 
-static void PT_CL_AppendBuildLog( const ptClProgram_t &prog, std::string &log ) {
+static void PT_CL_AppendBuildLog( const ptClProgram_t &prog, idStr &log ) {
 	if ( !prog.program ) return;
 	size_t size = 0;
 	if ( clGetProgramBuildInfo( prog.program, prog.device, CL_PROGRAM_BUILD_LOG, 0, NULL, &size ) != CL_SUCCESS || size <= 1 ) return;
-	std::string text( size, '\0' );
-	clGetProgramBuildInfo( prog.program, prog.device, CL_PROGRAM_BUILD_LOG, size, &text[0], NULL );
-	while ( !text.empty() && ( text[text.size() - 1] == '\0' || text[text.size() - 1] == '\n' ) ) text.resize( text.size() - 1 );
-	if ( !text.empty() ) {
+	idList<char> buffer;
+	buffer.SetNum( (int)size + 1 );
+	buffer[(int)size] = '\0';
+	if ( clGetProgramBuildInfo( prog.program, prog.device, CL_PROGRAM_BUILD_LOG, size, buffer.Ptr(), NULL ) != CL_SUCCESS ) return;
+	idStr text = buffer.Ptr();
+	text.StripTrailing( '\n' );
+	if ( !text.IsEmpty() ) {
 		log += text;
 		log += "\n";
 	}
 }
 
 cl_int PT_CL_CreateProgram( ptClProgram_t &prog, cl_context context, cl_device_id device, const char *extraSource,
-							const std::vector<unsigned char> *cachedBinary, std::vector<unsigned char> *binaryOut,
-							std::string &log ) {
+							const idList<byte> *cachedBinary, idList<byte> *binaryOut,
+							idStr &log ) {
 	memset( &prog, 0, sizeof( prog ) );
 	prog.context = context;
 	prog.device = device;
 	prog.sortWorkGroup = PT_CL_SortWorkGroup( device );
-	const std::string options = PT_CL_BuildOptions( device );
+	const idStr options = PT_CL_BuildOptions( device );
 
 	cl_int error = CL_INVALID_BINARY;
-	if ( cachedBinary && !cachedBinary->empty() ) {
-		const size_t size = cachedBinary->size();
-		const unsigned char *data = &( *cachedBinary )[0];
+	if ( cachedBinary && cachedBinary->Num() > 0 ) {
+		const size_t size = (size_t)cachedBinary->Num();
+		const unsigned char *data = cachedBinary->Ptr();
 		cl_int status = CL_SUCCESS;
 		prog.program = clCreateProgramWithBinary( context, 1, &device, &size, &data, &status, &error );
 		if ( error == CL_SUCCESS && status == CL_SUCCESS ) {
@@ -243,13 +246,13 @@ cl_int PT_CL_CreateProgram( ptClProgram_t &prog, cl_context context, cl_device_i
 	}
 	if ( error != CL_SUCCESS ) {
 		error = PT_CL_BuildFromSource( prog, extraSource, options );
-		const size_t largeGrf = options.find( PT_CL_INTEL_LARGE_GRF );
-		if ( ( error == CL_INVALID_BUILD_OPTIONS || error == CL_BUILD_PROGRAM_FAILURE ) && largeGrf != std::string::npos ) {
+		const int largeGrf = options.Find( PT_CL_INTEL_LARGE_GRF );
+		if ( ( error == CL_INVALID_BUILD_OPTIONS || error == CL_BUILD_PROGRAM_FAILURE ) && largeGrf >= 0 ) {
 			// older Intel drivers do not know the large register file option
 			if ( prog.program ) clReleaseProgram( prog.program );
 			prog.program = NULL;
-			std::string fallback = options;
-			fallback.erase( largeGrf, strlen( PT_CL_INTEL_LARGE_GRF ) );
+			const idStr fallback = options.Left( largeGrf ) + options.Mid( largeGrf + idStr::Length( PT_CL_INTEL_LARGE_GRF ),
+				options.Length() );
 			error = PT_CL_BuildFromSource( prog, extraSource, fallback );
 		}
 		PT_CL_AppendBuildLog( prog, log );
@@ -259,23 +262,23 @@ cl_int PT_CL_CreateProgram( ptClProgram_t &prog, cl_context context, cl_device_i
 		}
 		if ( binaryOut ) {
 			size_t size = 0;
-			binaryOut->clear();
+			binaryOut->Clear();
 			if ( clGetProgramInfo( prog.program, CL_PROGRAM_BINARY_SIZES, sizeof( size ), &size, NULL ) == CL_SUCCESS && size > 0 ) {
-				binaryOut->resize( size );
-				unsigned char *data = &( *binaryOut )[0];
+				binaryOut->SetNum( (int)size );
+				unsigned char *data = binaryOut->Ptr();
 				if ( clGetProgramInfo( prog.program, CL_PROGRAM_BINARIES, sizeof( data ), &data, NULL ) != CL_SUCCESS ) {
-					binaryOut->clear();
+					binaryOut->Clear();
 				}
 			}
 		}
 	} else if ( binaryOut ) {
-		binaryOut->clear();
+		binaryOut->Clear();
 	}
 
 	for ( int i = 0; i < PT_CL_KERNEL_COUNT; i++ ) {
 		prog.kernels[i] = clCreateKernel( prog.program, ptClKernelNames[i], &error );
 		if ( error != CL_SUCCESS ) {
-			log += std::string( "clCreateKernel( " ) + ptClKernelNames[i] + " ) failed\n";
+			log += idStr::Format( "clCreateKernel( %s ) failed\n", ptClKernelNames[i] );
 			PT_CL_DestroyProgram( prog );
 			return error;
 		}
@@ -312,8 +315,8 @@ void PT_CL_DestroyProgram( ptClProgram_t &prog ) {
 
 static cl_event *PT_CL_NextEvent( ptClProgram_t &prog ) {
 	if ( !prog.events ) return NULL;
-	prog.events->push_back( NULL );
-	return &prog.events->back();
+	prog.events->Append( NULL );
+	return &( *prog.events )[prog.events->Num() - 1];
 }
 
 struct ptClArgs_t {
@@ -376,7 +379,7 @@ cl_int PT_CL_Copy( ptClProgram_t &prog, cl_command_queue queue, cl_mem src, cl_m
 PT_CL_CheckLayout
 ========================
 */
-cl_int PT_CL_CheckLayout( ptClProgram_t &prog, cl_command_queue queue, std::string &error ) {
+cl_int PT_CL_CheckLayout( ptClProgram_t &prog, cl_command_queue queue, idStr &error ) {
 	cl_int status = CL_SUCCESS;
 	cl_mem buffer = clCreateBuffer( prog.context, CL_MEM_WRITE_ONLY, 8 * sizeof( cl_int ), NULL, &status );
 	if ( status != CL_SUCCESS ) return status;
@@ -397,7 +400,7 @@ cl_int PT_CL_CheckLayout( ptClProgram_t &prog, cl_command_queue queue, std::stri
 	for ( int i = 0; i < 8; i++ ) {
 		if ( sizes[i] != expected[i] ) {
 			char text[128];
-			snprintf( text, sizeof( text ), "%s is %d bytes on the device but %d on the host", names[i], sizes[i], expected[i] );
+			idStr::snPrintf( text, sizeof( text ), "%s is %d bytes on the device but %d on the host", names[i], sizes[i], expected[i] );
 			error = text;
 			return CL_INVALID_KERNEL_DEFINITION;
 		}
@@ -539,7 +542,7 @@ Host half of PT_Postprocess, identical clamping and pass order.
 ========================
 */
 static bool PT_CL_IsFinite( float value ) {
-	return value == value && value <= std::numeric_limits<float>::max() && value >= -std::numeric_limits<float>::max();
+	return !FLOAT_IS_NAN( value );	// idlib: all-ones exponent, so NaN and both infinities
 }
 
 cl_int PT_CL_Postprocess( ptClProgram_t &prog, cl_command_queue queue, const ptClPostprocessBuffers_t &buffers,

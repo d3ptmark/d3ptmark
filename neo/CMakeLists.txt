@@ -87,8 +87,6 @@ if(PATHTRACED)
 		if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES OR CMAKE_CUDA_ARCHITECTURES STREQUAL "")
 			set(CMAKE_CUDA_ARCHITECTURES "75;80;86;89;90") # Turing..Hopper
 		endif()
-		# optional NVML for GPU clock/power info in capture reports
-		find_path(PT_NVML_INCLUDE_DIR nvml.h HINTS ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES} /usr/local/cuda/include)
 		message(STATUS "CUDA path tracer enabled - compiler: ${CMAKE_CUDA_COMPILER}, architectures: ${CMAKE_CUDA_ARCHITECTURES}")
 	elseif(PT_HAVE_OPENCL)
 		message(STATUS "NVIDIA CUDA toolkit not found, d3ptmark-pt is built with the OpenCL backend only")
@@ -313,6 +311,7 @@ set(src_renderer
 	# benchmark/capture report code is active in both binaries (GL benchmarks)
 	renderer_pt/pt_benchmark.cpp
 	renderer_pt/pt_capture_report.cpp
+	renderer_pt/pt_gpu_telemetry.cpp
 )
 
 always_optimize_sourcefile(renderer/stblib_impls.c)
@@ -742,12 +741,9 @@ function(add_engine_binary name pathtraced)
 			target_include_directories(${name} PRIVATE ${PT_OPENCL_INCLUDE_DIR})
 			target_link_libraries(${name} ${CMAKE_DL_LIBS})
 		endif()
-		# NVML telemetry also works for NVIDIA GPUs driven through OpenCL (PCI bus id match)
-		if(PT_NVML_INCLUDE_DIR)
-			target_include_directories(${name} PRIVATE ${PT_NVML_INCLUDE_DIR})
-			target_compile_definitions(${name} PRIVATE HAVE_NVML_CAPTURE)
-		endif()
 	endif()
+	# GPU telemetry (pt_gpu_telemetry.cpp) loads NVML / pdh / dxgi at runtime
+	target_link_libraries(${name} ${CMAKE_DL_LIBS})
 endfunction()
 
 if(LEGACY)
@@ -810,12 +806,18 @@ if(TESTS)
 		add_executable(${name} renderer_pt/tests/${name}.cpp ${src_pt_opencl_launch})
 		target_compile_definitions(${name} PRIVATE ${pt_test_defines} CL_TARGET_OPENCL_VERSION=120)
 		target_include_directories(${name} PRIVATE ${PT_OPENCL_INCLUDE_DIR})
-		target_link_libraries(${name} ${CMAKE_DL_LIBS})
+		# pt_opencl_kernels.cpp uses idStr/idList
+		target_link_libraries(${name} idlib ${CMAKE_DL_LIBS})
 		add_test(NAME ${name} COMMAND ${name})
 		set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
 	endfunction()
 
 	pt_cpu_test(pt_capture_report_test)
+
+	# provider matching and the Linux sysfs provider against a fake /sys tree
+	add_executable(pt_gpu_telemetry_test renderer_pt/tests/pt_gpu_telemetry_test.cpp renderer_pt/pt_gpu_telemetry.cpp)
+	target_link_libraries(pt_gpu_telemetry_test idlib ${CMAKE_DL_LIBS})
+	add_test(NAME pt_gpu_telemetry_test COMMAND pt_gpu_telemetry_test)
 	pt_cpu_test(pt_benchmark_test)
 	pt_cpu_test(pt_material_cache_test)
 	pt_cpu_test(pt_quality_preset_test)
