@@ -1,118 +1,90 @@
 # d3ptmark — Doom 3 Path-Tracer Benchmark
 
-**d3ptmark** is a benchmark mod for **Doom 3** that renders the game with a real-time
-**GPU path tracer** and compares it, frame by frame, against the classic OpenGL renderer.
+**d3ptmark** renders **Doom 3** with a real-time **GPU path tracer** and compares it, frame by
+frame, against the classic OpenGL renderer. It is a fork of [dhewm3](https://github.com/dhewm/dhewm3),
+the Doom 3 GPL source port. All engine credit goes to id Software and the dhewm3 contributors;
+this project adds `neo/renderer_pt/` and the benchmark tooling.
 
-It is a fork of [dhewm3](https://github.com/dhewm/dhewm3), the Doom 3 GPL source port.
-All engine credit goes to id Software and the dhewm3 contributors; everything under
-`neo/renderer_pt/` and the benchmark tooling is what this project adds.
-
-One build produces two binaries from the same source tree:
+One build produces two binaries that share the game libraries and data:
 
 | Binary | Renderer |
 |--------|----------|
-| `d3ptmark-le` | **l**egacy OpenGL rasterizer (stock dhewm3 rendering) plus the GPU path tracer without the experimental physical renderer (`PT_PHYSICAL`), when a CUDA or OpenCL backend is available |
-| `d3ptmark-pt` | GPU **p**ath **t**racer with the physical renderer (compiled with `-DPT_PATHTRACED -DPT_PHYSICAL`), CUDA and/or OpenCL backend |
-
-Both binaries share the same game libraries (`base`, `d3xp`) and the same game data,
-so like-for-like comparisons only swap the executable.
+| `d3ptmark-le` | OpenGL, plus the path tracer without the physical renderer |
+| `d3ptmark-pt` | Path tracer with the experimental physical renderer (`PT_PHYSICAL`) |
 
 ## Requirements
 
-- **Doom 3 game data** (the `*.pk4` files of a retail/Steam/GOG install, patched to
-  1.3.1) — not included
-- Linux (GCC/Clang) or Windows (Visual Studio)
-- CMake ≥ 3.18, SDL2, OpenAL, optionally libcurl
-- For `d3ptmark-pt` (and the path tracer in `d3ptmark-le`), at least one of:
-  - the NVIDIA CUDA toolkit and an NVIDIA GPU (Turing / SM 75 or newer) for the CUDA backend
-  - the OpenCL headers (`CL/cl.h`) and an OpenCL 1.2 GPU (AMD, Intel or NVIDIA) for the OpenCL backend
+- Doom 3 game data (`*.pk4` from a retail/Steam/GOG install, patched to 1.3.1), not included
+- Linux (GCC/Clang) or Windows (Visual Studio), CMake ≥ 3.18, SDL2, OpenAL, optionally libcurl
+- For the path tracer, at least one of:
+  - CUDA toolkit and an NVIDIA GPU (Turing / SM 75 or newer)
+  - OpenCL headers (`CL/cl.h`) and an OpenCL 1.2 GPU (AMD, Intel or NVIDIA)
 
 ## Building
 
-Linux:
-
 ```sh
-./build.sh      # configure + build into build/
-./clean.sh      # remove build/
+./build.sh      # Linux: configure and build into build/
+./clean.sh
 ```
-
-Windows (CMake and Visual Studio installed, run from a developer prompt):
 
 ```bat
 build.bat -DDHEWM3LIBS=C:\path\to\dhewm3-libs\x86_64-w64-mingw32
 clean.bat
 ```
 
-Prebuilt SDL2/OpenAL/curl for Windows come from the
-[dhewm3-libs](https://github.com/dhewm/dhewm3-libs) repository.
-
-Binaries end up in `build/` (Windows: `build\RelWithDebInfo\`). Extra script
-arguments are passed to CMake:
+On Windows, run from a Visual Studio developer prompt. SDL2/OpenAL/curl come from
+[dhewm3-libs](https://github.com/dhewm/dhewm3-libs). Binaries land in `build/`
+(`build\RelWithDebInfo\` on Windows). Extra arguments are passed to CMake:
 
 | Option | Default | Effect |
 |--------|---------|--------|
-| `-DPATHTRACED=OFF` | `ON` | skip `d3ptmark-pt` (no CUDA toolkit or OpenCL headers required; `d3ptmark-le` still gets the path tracer if a backend is found) |
-| `-DOPENCL=OFF` | `ON` | build the path tracer without the OpenCL backend |
-| `-DLEGACY=OFF` | `ON` | skip `d3ptmark-le` |
-| `-DTESTS=ON` | `OFF` | build the path tracer regression tests (`ctest`) |
-| `-DCMAKE_CUDA_ARCHITECTURES=75` | `75;80;86;89;90` | build kernels for one GPU generation only (faster build) |
+| `-DPATHTRACED=OFF` | `ON` | Skip `d3ptmark-pt` |
+| `-DLEGACY=OFF` | `ON` | Skip `d3ptmark-le` |
+| `-DOPENCL=OFF` | `ON` | Build without the OpenCL backend |
+| `-DTESTS=ON` | `OFF` | Build the regression tests (`ctest`) |
+| `-DCMAKE_CUDA_ARCHITECTURES=75` | `75;80;86;89;90` | Build kernels for one GPU generation |
 
-If your host compiler is newer than your CUDA toolkit supports, configure with the
-`CUDAFLAGS` environment variable, e.g.:
-
-```sh
-CUDAFLAGS="-allow-unsupported-compiler -std=c++17" ./build.sh
-```
-
-See [docs/PathTracer.md](./docs/PathTracer.md) for more CUDA and OpenCL build details.
+If your compiler is newer than your CUDA toolkit supports, see
+[docs/PathTracer.md](./docs/PathTracer.md#cuda).
 
 ## Running
 
-Copy the Doom 3 `*.pk4` files into `base/` (and `d3xp/` for the expansion) next to the
-binaries, or point the engine at an existing installation:
+Copy the `*.pk4` files into `base/` (and `d3xp/` for the expansion) next to the binaries, or
+point the engine at an installation:
 
 ```sh
 ./build/d3ptmark-pt +set fs_basepath /path/to/doom3
-./build/d3ptmark-le +set fs_basepath /path/to/doom3
 ```
 
 ## Benchmarking
-
-Quality tiers are selected with `r_ptPreset` (`gameplay_low/med/high/ultra`,
-`cinematic_low/med/high/ultra`). The main benchmark commands:
-
-| Command | Description |
-|---------|-------------|
-| `r_ptBenchmark <demo> <spp>` | play a recorded render demo, converging every frame to exactly `<spp>` samples per pixel, saving each frame and printing timing statistics |
-| `r_glBenchmark <demo>` | replay the same demo with OpenGL for image-by-image comparison (also available in `d3ptmark-le`) |
-| `r_ptSequence <start> <end> [spp]` | path trace a range of live game ticks at exact samples per pixel |
-| `r_ptCompare [spp]` | save an OpenGL and a path-traced screenshot of the current view |
-| `r_ptInfo` | print backend, device, memory and timing info |
-| `r_ptAbort` / `r_glAbort` | cancel a running capture, keeping finished images |
-
-Example run:
 
 ```sh
 ./build/d3ptmark-pt +r_ptPreset cinematic_high +r_ptBenchmark demo1 32
 ```
 
-Images and versioned capture reports are written below `screenshots/` in `fs_savepath`
-(`ptbench/`, `glbench/`, `ptreports/`, `glreports/`). With Dear ImGui enabled, `r_ptUI`
-opens the in-game tuning panel for presets, quality budgets, denoising and the physical
-camera/material controls.
+| Command | Description |
+|---------|-------------|
+| `r_ptBenchmark <demo> <spp>` | Replay a render demo, converging every frame to exactly `<spp>` samples per pixel |
+| `r_glBenchmark <demo>` | Replay the same demo with OpenGL for image-by-image comparison |
+| `r_ptSequence <start> <end> [spp]` | Path trace a range of live game ticks |
+| `r_ptCompare [spp]` | Save an OpenGL and a path-traced screenshot of the current view |
+| `r_ptAbort` / `r_glAbort` | Cancel a capture, keeping finished images |
+| `r_ptInfo` | Backend, device, memory and timing info |
+
+Quality is set with `r_ptPreset` (`gameplay_low/med/high/ultra`, `cinematic_low/med/high/ultra`).
+Images and capture reports (timings plus GPU/CPU telemetry) are written below `screenshots/`
+in `fs_savepath`. `r_ptUI` opens the in-game tuning panel.
 
 ## Documentation
 
-- [docs/PathTracer.md](./docs/PathTracer.md) — path tracer internals: architecture,
-  rendering modes, materials, denoising, physical rendering, presets, console
-  commands and CVar reference
-- [docs/README-dhewm3.md](./docs/README-dhewm3.md) — the upstream dhewm3 README,
-  including notes on game data and third-party license notices
-- [Configuration.md](./Configuration.md) — engine configuration
-- [Changelog.md](./Changelog.md) — dhewm3 changelog
+- [docs/PathTracer.md](./docs/PathTracer.md): path tracer building, architecture,
+  rendering, denoising, physical renderer, capture tools, presets and cvars
+- [Benchmark.md](./Benchmark.md): benchmark runs and timing details
+- [docs/README-dhewm3.md](./docs/README-dhewm3.md): upstream dhewm3 README and third-party notices
+- [Configuration.md](./Configuration.md): engine configuration
+- [Changelog.md](./Changelog.md): dhewm3 changelog
 
 ## License
 
-GPLv3, see [COPYING.txt](./COPYING.txt). Based on [dhewm3](https://github.com/dhewm/dhewm3);
-Doom 3 is a trademark of id Software. Third-party license notices are listed in
-[docs/README-dhewm3.md](./docs/README-dhewm3.md).
+GPLv3, see [COPYING.txt](./COPYING.txt). Doom 3 is a trademark of id Software. Third-party
+notices are listed in [docs/README-dhewm3.md](./docs/README-dhewm3.md).
