@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds d3ptmark-le (legacy renderer) and d3ptmark-pt (CUDA path tracer) into build/.
+# Builds d3ptmark-le (OpenGL + path tracer without PT_PHYSICAL) and d3ptmark-pt (path tracer with PT_PHYSICAL) into build/.
 # Extra arguments are passed to CMake, e.g.:
 #   ./build.sh -DPATHTRACED=OFF
 #   ./build.sh -DCMAKE_CUDA_ARCHITECTURES=75

@@ -11,8 +11,8 @@ One build produces two binaries from the same source tree:
 
 | Binary | Renderer |
 |--------|----------|
-| `d3ptmark-le` | **l**egacy OpenGL rasterizer (stock dhewm3 rendering) |
-| `d3ptmark-pt` | GPU **p**ath **t**racer (compiled with `-DPT_PATHTRACED`), CUDA and/or OpenCL backend |
+| `d3ptmark-le` | **l**egacy OpenGL rasterizer (stock dhewm3 rendering) plus the GPU path tracer without the experimental physical renderer (`PT_PHYSICAL`), when a CUDA or OpenCL backend is available |
+| `d3ptmark-pt` | GPU **p**ath **t**racer with the physical renderer (compiled with `-DPT_PATHTRACED -DPT_PHYSICAL`), CUDA and/or OpenCL backend |
 
 Both binaries share the same game libraries (`base`, `d3xp`) and the same game data,
 so like-for-like comparisons only swap the executable.
@@ -23,7 +23,7 @@ so like-for-like comparisons only swap the executable.
   1.3.1) — not included
 - Linux (GCC/Clang) or Windows (Visual Studio)
 - CMake ≥ 3.18, SDL2, OpenAL, optionally libcurl
-- For `d3ptmark-pt`, at least one of:
+- For `d3ptmark-pt` (and the path tracer in `d3ptmark-le`), at least one of:
   - the NVIDIA CUDA toolkit and an NVIDIA GPU (Turing / SM 75 or newer) for the CUDA backend
   - the OpenCL headers (`CL/cl.h`) and an OpenCL 1.2 GPU (AMD, Intel or NVIDIA) for the OpenCL backend
 
@@ -51,8 +51,8 @@ arguments are passed to CMake:
 
 | Option | Default | Effect |
 |--------|---------|--------|
-| `-DPATHTRACED=OFF` | `ON` | skip `d3ptmark-pt` (no CUDA toolkit or OpenCL headers required) |
-| `-DOPENCL=OFF` | `ON` | build `d3ptmark-pt` without the OpenCL backend |
+| `-DPATHTRACED=OFF` | `ON` | skip `d3ptmark-pt` (no CUDA toolkit or OpenCL headers required; `d3ptmark-le` still gets the path tracer if a backend is found) |
+| `-DOPENCL=OFF` | `ON` | build the path tracer without the OpenCL backend |
 | `-DLEGACY=OFF` | `ON` | skip `d3ptmark-le` |
 | `-DTESTS=ON` | `OFF` | build the path tracer regression tests (`ctest`) |
 | `-DCMAKE_CUDA_ARCHITECTURES=75` | `75;80;86;89;90` | build kernels for one GPU generation only (faster build) |

@@ -1,5 +1,5 @@
 @echo off
-rem Builds d3ptmark-le (legacy renderer) and d3ptmark-pt (CUDA path tracer) into build\.
+rem Builds d3ptmark-le (OpenGL + path tracer without PT_PHYSICAL) and d3ptmark-pt (path tracer with PT_PHYSICAL) into build\.
 rem Extra arguments are passed to CMake, e.g.:
 rem   build.bat -DPATHTRACED=OFF
 rem   build.bat -DDHEWM3LIBS=C:\path\to\dhewm3-libs\x86_64-w64-mingw32

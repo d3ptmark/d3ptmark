@@ -3,14 +3,17 @@ project(d3ptmark C CXX)
 
 # d3ptmark - Doom 3 Path-Tracer Benchmark (based on dhewm3).
 # Builds two engine binaries from the same source tree:
-#   d3ptmark-le - legacy OpenGL renderer
-#   d3ptmark-pt - GPU path tracer (compiled with -DPT_PATHTRACED), CUDA and/or OpenCL backends
+#   d3ptmark-le - legacy OpenGL renderer plus the GPU path tracer without the
+#                 physical camera/lighting/material renderer (PT_PHYSICAL)
+#   d3ptmark-pt - GPU path tracer with the physical renderer (compiled with
+#                 -DPT_PATHTRACED -DPT_PHYSICAL)
+# Both use the CUDA and/or OpenCL backends that are found.
 # plus the game libraries (base, d3xp) shared by both binaries.
 # Supported platforms: Linux (GCC/Clang/MinGW) and Windows (MSVC).
 
-option(LEGACY     "Build the legacy renderer binary (d3ptmark-le)" ON)
+option(LEGACY     "Build the legacy renderer binary (d3ptmark-le), with the path tracer minus PT_PHYSICAL when a backend is found" ON)
 option(PATHTRACED "Build the path-traced binary (d3ptmark-pt), requires the NVIDIA CUDA toolkit and/or the OpenCL headers" ON)
-option(OPENCL     "Add the OpenCL 1.2 backend to d3ptmark-pt (needs only the OpenCL headers, the runtime is loaded on demand)" ON)
+option(OPENCL     "Add the OpenCL 1.2 backend to the path tracer (needs only the OpenCL headers, the runtime is loaded on demand)" ON)
 option(TESTS      "Build the path tracer regression tests (run with ctest)" OFF)
 
 set(CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/sys/cmake")
@@ -59,7 +62,7 @@ endif()
 
 set(PT_HAVE_CUDA OFF)
 set(PT_HAVE_OPENCL OFF)
-if(PATHTRACED)
+if(PATHTRACED OR LEGACY)
 	# OpenCL backend: only the headers are needed at build time, the ICD loader
 	# (OpenCL.dll / libOpenCL.so.1) is loaded when the backend starts
 	if(OPENCL)
@@ -74,7 +77,7 @@ if(PATHTRACED)
 			set(PT_HAVE_OPENCL ON)
 			message(STATUS "OpenCL path tracer enabled - headers: ${PT_OPENCL_INCLUDE_DIR}")
 		else()
-			message(WARNING "OpenCL headers (CL/cl.h) not found, d3ptmark-pt is built without the OpenCL backend")
+			message(WARNING "OpenCL headers (CL/cl.h) not found, the path tracer is built without the OpenCL backend")
 		endif()
 	endif()
 
@@ -89,10 +92,16 @@ if(PATHTRACED)
 		endif()
 		message(STATUS "CUDA path tracer enabled - compiler: ${CMAKE_CUDA_COMPILER}, architectures: ${CMAKE_CUDA_ARCHITECTURES}")
 	elseif(PT_HAVE_OPENCL)
-		message(STATUS "NVIDIA CUDA toolkit not found, d3ptmark-pt is built with the OpenCL backend only")
-	else()
+		message(STATUS "NVIDIA CUDA toolkit not found, the path tracer is built with the OpenCL backend only")
+	elseif(PATHTRACED)
 		message(FATAL_ERROR "d3ptmark-pt needs the NVIDIA CUDA toolkit or the OpenCL headers - install one or configure with -DPATHTRACED=OFF")
+	else()
+		message(STATUS "No path tracer backend (CUDA toolkit or OpenCL headers) found, d3ptmark-le is built with OpenGL only")
 	endif()
+endif()
+set(PT_HAVE_BACKEND OFF)
+if(PT_HAVE_CUDA OR PT_HAVE_OPENCL)
+	set(PT_HAVE_BACKEND ON)
 endif()
 
 # ---------------------------------------------------------------------------
@@ -316,7 +325,8 @@ set(src_renderer
 
 always_optimize_sourcefile(renderer/stblib_impls.c)
 
-# path tracer host sources, only compiled into d3ptmark-pt
+# path tracer host sources (pt_physical.cpp and pt_material_editor.cpp are
+# empty without PT_PHYSICAL, i.e. in d3ptmark-le)
 set(src_pt_host
 	renderer_pt/pt_render.cpp
 	renderer_pt/pt_ui.cpp
@@ -367,6 +377,10 @@ if(PT_HAVE_OPENCL)
 		COMMENT "Embedding OpenCL path tracer program"
 		VERBATIM
 	)
+	# one generating target: d3ptmark-le, d3ptmark-pt and the OpenCL tests all use the
+	# header, and a custom command output shared by several targets may otherwise run
+	# concurrently in parallel builds
+	add_custom_target(pt_opencl_program DEPENDS "${pt_opencl_header}")
 	# launch layer without idlib dependencies, shared with the OpenCL regression tests
 	set(src_pt_opencl_launch
 		renderer_pt/opencl/pt_opencl_kernels.cpp
@@ -710,8 +724,9 @@ add_library(idlib STATIC ${src_idlib})
 set_property(TARGET idlib PROPERTY POSITION_INDEPENDENT_CODE ON) # linked into the game .so/.dll
 
 # engine executable; pathtraced=TRUE additionally compiles the path tracer
-# with every available backend (CUDA and/or OpenCL)
-function(add_engine_binary name pathtraced)
+# with every available backend (CUDA and/or OpenCL), physical=TRUE adds the
+# physical camera/lighting/material renderer (PT_PHYSICAL)
+function(add_engine_binary name pathtraced physical)
 	set(src ${src_engine})
 	if(pathtraced)
 		list(APPEND src ${src_pt_host})
@@ -730,7 +745,10 @@ function(add_engine_binary name pathtraced)
 	target_link_libraries(${name} idlib ${OPENAL_LIBRARY} ${curl_lib} ${SDL2_LIBRARY} ${sys_libs})
 
 	if(pathtraced)
-		target_compile_definitions(${name} PRIVATE PT_PATHTRACED HAVE_PATHTRACER PT_PHYSICAL)
+		target_compile_definitions(${name} PRIVATE HAVE_PATHTRACER)
+		if(physical)
+			target_compile_definitions(${name} PRIVATE PT_PATHTRACED PT_PHYSICAL)
+		endif()
 		if(PT_HAVE_CUDA)
 			target_compile_definitions(${name} PRIVATE HAVE_CUDA)
 			set_target_properties(${name} PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
@@ -740,6 +758,7 @@ function(add_engine_binary name pathtraced)
 			target_compile_definitions(${name} PRIVATE HAVE_OPENCL CL_TARGET_OPENCL_VERSION=120)
 			target_include_directories(${name} PRIVATE ${PT_OPENCL_INCLUDE_DIR})
 			target_link_libraries(${name} ${CMAKE_DL_LIBS})
+			add_dependencies(${name} pt_opencl_program)
 		endif()
 	endif()
 	# GPU telemetry (pt_gpu_telemetry.cpp) loads NVML / pdh / dxgi at runtime
@@ -747,11 +766,11 @@ function(add_engine_binary name pathtraced)
 endfunction()
 
 if(LEGACY)
-	add_engine_binary(d3ptmark-le FALSE)
+	add_engine_binary(d3ptmark-le ${PT_HAVE_BACKEND} FALSE)
 endif()
 
 if(PATHTRACED)
-	add_engine_binary(d3ptmark-pt TRUE)
+	add_engine_binary(d3ptmark-pt TRUE TRUE)
 	set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT d3ptmark-pt)
 endif()
 
@@ -808,6 +827,7 @@ if(TESTS)
 		target_include_directories(${name} PRIVATE ${PT_OPENCL_INCLUDE_DIR})
 		# pt_opencl_kernels.cpp uses idStr/idList
 		target_link_libraries(${name} idlib ${CMAKE_DL_LIBS})
+		add_dependencies(${name} pt_opencl_program)
 		add_test(NAME ${name} COMMAND ${name})
 		set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
 	endfunction()

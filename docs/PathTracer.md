@@ -4,8 +4,9 @@ d3ptmark adds a **GPU path tracer** (`neo/renderer_pt/`) that can replace the
 classic OpenGL rasterizer for 3D views. The front end is compute-API agnostic, with two
 backends: **CUDA** (`neo/renderer_pt/cuda/`) and **OpenCL** (`neo/renderer_pt/opencl/`), a
 port of the CUDA kernels to OpenCL 1.2 for AMD, Intel and NVIDIA GPUs. Every backend whose
-toolchain is found is compiled into the `d3ptmark-pt` binary; `d3ptmark-le` contains the stock
-OpenGL renderer.
+toolchain is found is compiled into both binaries: `d3ptmark-pt` with the experimental physical
+renderer (`PT_PHYSICAL`, see below), `d3ptmark-le` without it, next to the stock OpenGL
+renderer. Without any backend toolchain `d3ptmark-le` is built with OpenGL only.
 
 ## Overview
 
@@ -38,7 +39,7 @@ and all GUI drawing on top of the 3D view.
    - Report unrecoverable device errors through `IsHealthy()`, and the front end falls back to OpenGL.
    - All data types in `pt_types.h` are plain structs with no API-specific members, so they can be copied to the device as-is.
 2. Export `PT_<API>_IsAvailable()`, `PT_<API>_CreateBackend()` and `PT_<API>_GetDeviceInfo()` (used by capture reports), and add them to `ptBackendFactories[]` in `pt_render.cpp`.
-3. In `neo/CMakeLists.txt`, add a detection block that sets `PT_HAVE_<API>`, a `src_pt_<api>` source list, and the `HAVE_<API>` define for the `d3ptmark-pt` target in `add_engine_binary()` (see the CUDA and OpenCL blocks).
+3. In `neo/CMakeLists.txt`, add a detection block that sets `PT_HAVE_<API>`, a `src_pt_<api>` source list, and the `HAVE_<API>` define for path-traced targets in `add_engine_binary()` (see the CUDA and OpenCL blocks).
 4. Select it with `r_ptBackend <name>`. `auto` picks the first available backend.
 
 ## Rendering Modes (`r_ptMode`)
@@ -211,8 +212,8 @@ The flags are cached for subsequent script runs (reconfigure from scratch with
 `./clean.sh`). This remains an unsupported compiler combination; a CUDA-supported host
 compiler is preferred.
 
-With `-DPATHTRACED=OFF` only `d3ptmark-le` is built, which runs as plain dhewm3 with no
-path tracer code compiled in.
+With `-DPATHTRACED=OFF` only `d3ptmark-le` is built: the OpenGL renderer plus the path
+tracer without `PT_PHYSICAL` when a backend toolchain is found, plain dhewm3 otherwise.
 
 ## Building with OpenCL
 
@@ -220,8 +221,9 @@ The OpenCL backend is enabled by default (`-DOPENCL=OFF` disables it) and needs 
 OpenCL headers (`CL/cl.h`, for example the `opencl-headers` package or a GPU vendor SDK).
 The executable does not link against OpenCL: the ICD loader (`OpenCL.dll`, `libOpenCL.so.1`)
 is loaded when the backend starts, so `d3ptmark-pt` still runs on machines without an OpenCL
-driver and falls back to OpenGL. Without the CUDA toolkit, `d3ptmark-pt` is built with the
-OpenCL backend only; configuration fails only when neither backend is available.
+driver and falls back to OpenGL. Without the CUDA toolkit, both binaries are built with the
+OpenCL backend only; configuration fails only when neither backend is available and
+`d3ptmark-pt` is requested (`d3ptmark-le` then falls back to OpenGL only).
 
 The device needs OpenCL 1.2 and an online compiler. The kernels are embedded in the
 executable and compiled for the selected device on first use, which can take tens of seconds.
@@ -275,8 +277,9 @@ denoising history.
 ### Experimental physical rendering (`PT_PHYSICAL`)
 
 This is a separate **build-time rendering model**, not another quality preset.
-It is always compiled into `d3ptmark-pt` (together with the CUDA path tracer and
-the Dear ImGui integration); `d3ptmark-le` contains none of it.
+It is always compiled into `d3ptmark-pt`; `d3ptmark-le` contains the same path tracer
+(CUDA/OpenCL backends, Dear ImGui integration) without it, so path tracing there uses
+the legacy shading model.
 
 The CUDA host-compiler compatibility notes above also apply to this build.
 Game data and game libraries must be installed as for a normal engine build.
