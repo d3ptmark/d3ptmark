@@ -87,6 +87,8 @@ static struct {
 	bool haveDevice = false;
 	int requestedSpp = 0, startFrame = 0, endFrame = 0, rows = 0, sourceFrame = 0;
 	int captureBatch = 1;
+	int benchmarkPacing = -1;		// -1 not a benchmark, 0 capped at 30 Hz, 1 uncapped
+	int benchmarkSaveImages = -1;	// -1 not a benchmark, 0 no, 1 yes
 	int width = 0, height = 0, spp = 0, dispatches = 0;
 	double start = 0, frameStart = 0, sourceTime = 0;
 	time_t startedUnix = 0;
@@ -212,6 +214,8 @@ static bool Metadata( const char *status, const char *reason ) {
 		+ ",\n  \"telemetry_unavailable_reason\":" + ( report.telemetryFailure.IsEmpty() ? "null" : PT_ReportJsonString( report.telemetryFailure.c_str() ) )
 		+ ",\n  \"telemetry_unavailable_sensors\":" + PT_ReportJsonString( report.telemetryUnavailable.c_str() )
 		+ ",\n  \"telemetry_interval_ms\":1000,\n  \"gpu_stage_timing\":" + ( report.openGL ? "false" : "true" )
+		+ ",\n  \"benchmark_pacing\":" + ( report.benchmarkPacing < 0 ? "null" : ( report.benchmarkPacing ? "\"uncapped\"" : "\"capped_30hz\"" ) )
+		+ ",\n  \"benchmark_save_images\":" + ( report.benchmarkSaveImages < 0 ? "null" : ( report.benchmarkSaveImages ? "true" : "false" ) )
 		+ ",\n  \"requested_spp\":" + ( report.openGL ? "null" : Number( report.requestedSpp ) )
 		+ ",\n  \"capture_batch_spp\":" + ( report.openGL ? idStr( "null" ) : Integer( report.captureBatch ) )
 		+ ",\n  \"capture_target_dispatches\":" + ( report.openGL ? idStr( "null" ) : Integer( report.requestedSpp / report.captureBatch ) )
@@ -401,6 +405,16 @@ R_PT_ReportActive
 ========================
 */
 bool R_PT_ReportActive() { return report.active; }
+
+/*
+========================
+R_PT_ReportBenchmarkOptions
+========================
+*/
+void R_PT_ReportBenchmarkOptions( bool uncapped, bool saveImages ) {
+	report.benchmarkPacing = uncapped ? 1 : 0;
+	report.benchmarkSaveImages = saveImages ? 1 : 0;
+}
 const char *R_PT_ReportDirectory() { return report.active ? report.directory.c_str() : NULL; }
 
 void R_PT_ReportSettings() {
@@ -456,6 +470,7 @@ bool R_PT_ReportBegin( const idCmdArgs &args, const char *mode, const char *sour
 	}
 	report.command = command;
 	report.requestedSpp = requestedSpp; report.startFrame = startFrame; report.endFrame = endFrame;
+	report.benchmarkPacing = report.benchmarkSaveImages = -1;
 	report.captureBatch = report.openGL ? 1 : PT_BenchmarkBatchSize( requestedSpp, cvarSystem->GetCVarInteger( "r_ptSamplesPerPixel" ) );
 	report.rows = 0; report.totalGpu = report.totalWall = 0; report.start = Sys_MillisecondsPrecise();
 	report.startedUnix = time( NULL );

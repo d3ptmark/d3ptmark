@@ -67,5 +67,7 @@ void R_PT_ReportPhase( const char *phase );
 void R_PT_ReportEnd( bool completed, const char *reason = "" );
 void R_PT_ReportTick();
 bool R_PT_ReportActive();
+// r_ptBenchmark / r_glBenchmark options, recorded in metadata.json (call after R_PT_ReportBegin)
+void R_PT_ReportBenchmarkOptions( bool uncapped, bool saveImages );
 const char *R_PT_ReportDirectory();
 #endif

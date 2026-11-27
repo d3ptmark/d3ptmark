@@ -398,6 +398,7 @@ static bool R_StartBenchmark( const idCmdArgs &args, bool openGL ) {
 	benchmark.imageFormat = cvarSystem->GetCVarInteger( "r_screenshotFormat" );
 	benchmark.uncapped = uncapped;
 	benchmark.saveImages = saveImages;
+	R_PT_ReportBenchmarkOptions( uncapped, saveImages );
 	benchmark.samples = samples;
 	benchmark.batch = 1;
 #ifdef HAVE_PATHTRACER
