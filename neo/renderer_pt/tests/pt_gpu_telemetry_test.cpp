@@ -24,6 +24,11 @@ static int failures = 0;
 	if ( !( condition ) ) { std::fprintf( stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, #condition ); failures++; } \
 } while ( 0 )
 
+/*
+========================
+Near
+========================
+*/
 static bool Near( double a, double b ) { return std::fabs( a - b ) <= 1e-6 * std::fmax( 1.0, std::fabs( b ) ); }
 
 static void TestParsing() {
@@ -52,6 +57,11 @@ static void TestParsing() {
 
 static std::string root;
 
+/*
+========================
+MakeDirs
+========================
+*/
 static void MakeDirs( const std::string &path ) {
 	for ( size_t slash = root.size() + 1; slash != std::string::npos; slash = path.find( '/', slash + 1 ) ) {
 		mkdir( path.substr( 0, slash ).c_str(), 0755 );
@@ -59,6 +69,11 @@ static void MakeDirs( const std::string &path ) {
 	mkdir( path.c_str(), 0755 );
 }
 
+/*
+========================
+WriteFile
+========================
+*/
 static void WriteFile( const std::string &path, const std::string &text ) {
 	MakeDirs( path.substr( 0, path.rfind( '/' ) ) );
 	FILE *file = std::fopen( path.c_str(), "w" );
@@ -67,10 +82,20 @@ static void WriteFile( const std::string &path, const std::string &text ) {
 	std::fclose( file );
 }
 
+/*
+========================
+RemoveEntry
+========================
+*/
 static int RemoveEntry( const char *path, const struct stat *, int, struct FTW * ) {
 	return std::remove( path );
 }
 
+/*
+========================
+TestAmdgpu
+========================
+*/
 static void TestAmdgpu() {
 	const std::string device = root + "/bus/pci/devices/0000:03:00.0";
 	WriteFile( device + "/uevent", "DRIVER=amdgpu\nPCI_CLASS=30000\nPCI_ID=1002:73BF\nPCI_SLOT_NAME=0000:03:00.0\n" );
@@ -121,6 +146,11 @@ static void TestAmdgpu() {
 	delete telemetry;
 }
 
+/*
+========================
+TestI915ByVendor
+========================
+*/
 static void TestI915ByVendor() {
 	// no PCI address: the only GPU of the target vendor under /sys/class/drm is used
 	const std::string intel = root + "/class/drm/card0/device";
@@ -175,6 +205,11 @@ static void TestI915ByVendor() {
 	delete telemetry;
 }
 
+/*
+========================
+TestUnsupportedDriver
+========================
+*/
 static void TestUnsupportedDriver() {
 	WriteFile( root + "/bus/pci/devices/0000:01:00.0/uevent", "DRIVER=nvidia\nPCI_ID=10DE:1EB1\n" );
 	ptGpuTelemetryTarget_t target;
@@ -187,6 +222,11 @@ static void TestUnsupportedDriver() {
 	delete telemetry;
 }
 
+/*
+========================
+TestI915Fdinfo
+========================
+*/
 static void TestI915Fdinfo() {
 	const std::string device = root + "/bus/pci/devices/0000:00:02.0";
 	WriteFile( device + "/uevent", "DRIVER=i915\nPCI_ID=8086:A7A0\nPCI_SLOT_NAME=0000:00:02.0\n" );
@@ -235,6 +275,11 @@ static void TestI915Fdinfo() {
 	delete telemetry;
 }
 
+/*
+========================
+TestXeFdinfoCycles
+========================
+*/
 static void TestXeFdinfoCycles() {
 	const std::string device = root + "/bus/pci/devices/0000:04:00.0";
 	WriteFile( device + "/uevent", "DRIVER=xe\nPCI_ID=8086:E20B\nPCI_SLOT_NAME=0000:04:00.0\n" );
@@ -266,6 +311,11 @@ static void TestXeFdinfoCycles() {
 	delete telemetry;
 }
 
+/*
+========================
+TestLinuxCpu
+========================
+*/
 static void TestLinuxCpu() {
 	const std::string sys = root + "/cpusys", proc = root + "/cpuproc";
 	WriteFile( proc + "/stat", "cpu  100 0 100 700 100 0 0 0 0 0\ncpu0 50 0 50 350 50 0 0 0 0 0\nintr 1\n" );
@@ -349,6 +399,11 @@ static void TestLinuxCpu() {
 
 #endif // !_WIN32
 
+/*
+========================
+main
+========================
+*/
 int main() {
 	TestParsing();
 #ifndef _WIN32

@@ -8,26 +8,26 @@
 class idPathTracerScene;
 
 typedef struct {
-	float		traceMs;			// GPU time of the last Render()
-	float		pathMs, denoiseMs, postprocessMs, toneMapMs;
-	int			numVertices;
-	int			numTriangles;
-	int			numBVHNodes;
-	int			numMaterials;
-	int			numLights;
-	int			numTextures;
-	size_t		deviceBytes;		// approximate device memory owned by the backend
+	float	traceMs;		// GPU time of the last Render()
+	float	pathMs, denoiseMs, postprocessMs, toneMapMs;
+	int		numVertices;
+	int		numTriangles;
+	int		numBVHNodes;
+	int		numMaterials;
+	int		numLights;
+	int		numTextures;
+	size_t	deviceBytes;	// approximate device memory owned by the backend
 } ptBackendStats_t;
 
 struct ptBackendDeviceInfo_t {
-	char name[256];
-	char pciBusId[32];			// telemetry device matching only, not exported
-	unsigned int vendorId;		// PCI vendor id (0x10de, 0x1002, 0x8086), 0 if unknown
-	int driverVersion, runtimeVersion, multiprocessors, computeMajor, computeMinor;
-	size_t totalMemory;
-	char api[16];				// "opencl"; empty for CUDA, whose report format predates this field
-	char driverString[128];		// OpenCL: CL_DRIVER_VERSION
-	char apiVersion[128];		// OpenCL: CL_DEVICE_VERSION
+	char			name[256];
+	char			pciBusId[32];		// telemetry device matching only, not exported
+	unsigned int	vendorId;			// PCI vendor id (0x10de, 0x1002, 0x8086), 0 if unknown
+	int				driverVersion, runtimeVersion, multiprocessors, computeMajor, computeMinor;
+	size_t			totalMemory;
+	char			api[16];			// "opencl"; empty for CUDA, whose report format predates this field
+	char			driverString[128];	// OpenCL: CL_DRIVER_VERSION
+	char			apiVersion[128];	// OpenCL: CL_DEVICE_VERSION
 };
 
 /*
@@ -42,7 +42,7 @@ struct ptBackendDeviceInfo_t {
 	subclassing this and registering a factory in pt_render.cpp.
 
 	Call order per view:
-		UploadScene( scene )  ->  Render( params )  ->  ReadPixels( ... )
+	UploadScene( scene )  ->  Render( params )  ->  ReadPixels( ... )
 
 	All methods are called from the render back end thread.
 

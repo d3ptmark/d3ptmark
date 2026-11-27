@@ -61,6 +61,11 @@ struct ptClDeviceChoice_t {
 	int				deviceIndex;
 };
 
+/*
+========================
+PT_CL_DeviceUsable
+========================
+*/
 static bool PT_CL_DeviceUsable( cl_device_id device ) {
 	cl_bool available = CL_FALSE, compiler = CL_FALSE;
 	char version[128] = {};
@@ -74,6 +79,11 @@ static bool PT_CL_DeviceUsable( cl_device_id device ) {
 	return available && compiler && ( major > 1 || ( major == 1 && minor >= 2 ) );
 }
 
+/*
+========================
+PT_CL_SelectDevice
+========================
+*/
 static bool PT_CL_SelectDevice( ptClDeviceChoice_t &choice ) {
 	memset( &choice, 0, sizeof( choice ) );
 	if ( !PT_CL_Load() ) return false;
@@ -120,6 +130,11 @@ static bool PT_CL_SelectDevice( ptClDeviceChoice_t &choice ) {
 	return choice.device != NULL;
 }
 
+/*
+========================
+PT_CL_DeviceString
+========================
+*/
 static idStr PT_CL_DeviceString( cl_device_id device, cl_device_info param ) {
 	char text[1024] = {};
 	if ( clGetDeviceInfo( device, param, sizeof( text ) - 1, text, NULL ) != CL_SUCCESS ) return "";
@@ -129,6 +144,11 @@ static idStr PT_CL_DeviceString( cl_device_id device, cl_device_info param ) {
 	return result;
 }
 
+/*
+========================
+PT_CL_PlatformString
+========================
+*/
 static idStr PT_CL_PlatformString( cl_platform_id platform, cl_platform_info param ) {
 	char text[1024] = {};
 	if ( clGetPlatformInfo( platform, param, sizeof( text ) - 1, text, NULL ) != CL_SUCCESS ) return "";
@@ -180,35 +200,35 @@ private:
 	float					ElapsedMs( size_t firstEvent, size_t endEvent ) const;
 	void					ReleaseEvents();
 
-	bool					initialized;
-	bool					healthy;
-	ptClDeviceChoice_t		choice;
-	cl_context				context;
-	cl_command_queue		queue;
-	ptClProgram_t			program;
-	idList<cl_event>		events;			// profiling events of the current Render()
-	cl_ulong				maxAllocation;
+	bool				initialized;
+	bool				healthy;
+	ptClDeviceChoice_t	choice;
+	cl_context			context;
+	cl_command_queue	queue;
+	ptClProgram_t		program;
+	idList<cl_event>	events;	// profiling events of the current Render()
+	cl_ulong			maxAllocation;
 
 	// output
-	int						maxWidth;
-	int						maxHeight;
-	cl_mem					d_accum;			// float4 HDR accumulation, row pitch == trace width
-	cl_mem					d_filtered;			// float4 denoised HDR, never fed back into accumulation
-	cl_mem					d_output;			// RGBA8
-	int						lastWidth;
-	int						lastHeight;
-	int						accumFrames;
-	float					traceMs;
-	float					pathMs, denoiseMs, postprocessMs, toneMapMs;
-	ptClDenoiseBuffers_t	denoiser;
-	ptClPostprocessBuffers_t postprocess;
-	int						postWidth, postHeight, postScale;
-	int						denoiseWidth;
-	int						denoiseHeight;
-	int						denoiseFrameSlot;
-	bool					denoiseHistoryValid;
-	ptRenderParams_t		previousDenoiseParams;
-	unsigned int			sampleSequence;
+	int							maxWidth;
+	int							maxHeight;
+	cl_mem						d_accum;	// float4 HDR accumulation, row pitch == trace width
+	cl_mem						d_filtered;	// float4 denoised HDR, never fed back into accumulation
+	cl_mem						d_output;	// RGBA8
+	int							lastWidth;
+	int							lastHeight;
+	int							accumFrames;
+	float						traceMs;
+	float						pathMs, denoiseMs, postprocessMs, toneMapMs;
+	ptClDenoiseBuffers_t		denoiser;
+	ptClPostprocessBuffers_t	postprocess;
+	int							postWidth, postHeight, postScale;
+	int							denoiseWidth;
+	int							denoiseHeight;
+	int							denoiseFrameSlot;
+	bool						denoiseHistoryValid;
+	ptRenderParams_t			previousDenoiseParams;
+	unsigned int				sampleSequence;
 
 	// scene, all grown on demand
 	cl_mem					d_vertices;		int capVertices;
@@ -224,22 +244,22 @@ private:
 	cl_mem					d_materials;	int capMaterials;
 	cl_mem					d_lights;		int capLights;
 
-	int						numVertices;
-	int						numTriangles;
-	int						numBVHNodes;
-	int						numMaterials;
-	int						numLights;
+	int	numVertices;
+	int	numTriangles;
+	int	numBVHNodes;
+	int	numMaterials;
+	int	numLights;
 
 	// textures: host mirror of the device descriptor table plus the texel pool
-	ptClTexture_t			h_texDesc[PT_MAX_TEXTURES];
-	size_t					h_texCapacity[PT_MAX_TEXTURES];	// texels reserved for the slot in the pool
-	cl_mem					d_texDesc;
-	cl_mem					d_texPool;
-	size_t					texPoolCapacity;	// texels
-	size_t					texPoolUsed;		// texels
-	int						numTextures;
-	int						textureGeneration;
-	size_t					textureBytes;
+	ptClTexture_t	h_texDesc[PT_MAX_TEXTURES];
+	size_t			h_texCapacity[PT_MAX_TEXTURES];	// texels reserved for the slot in the pool
+	cl_mem			d_texDesc;
+	cl_mem			d_texPool;
+	size_t			texPoolCapacity;				// texels
+	size_t			texPoolUsed;					// texels
+	int				numTextures;
+	int				textureGeneration;
+	size_t			textureBytes;
 };
 
 /*
@@ -377,7 +397,7 @@ void idPathTracerBackendOpenCL::PrintInfo() const {
 
 /*
 ========================
-idPathTracerBackendOpenCL::Allocate / Release
+idPathTracerBackendOpenCL::Allocate
 ========================
 */
 bool idPathTracerBackendOpenCL::Allocate( cl_mem &buffer, size_t bytes ) {
@@ -392,6 +412,11 @@ bool idPathTracerBackendOpenCL::Allocate( cl_mem &buffer, size_t bytes ) {
 	return true;
 }
 
+/*
+========================
+idPathTracerBackendOpenCL::Release
+========================
+*/
 void idPathTracerBackendOpenCL::Release( cl_mem &buffer ) {
 	if ( buffer ) clReleaseMemObject( buffer );
 	buffer = NULL;
@@ -576,6 +601,11 @@ bool idPathTracerBackendOpenCL::Resize( int width, int height ) {
 	return true;
 }
 
+/*
+========================
+idPathTracerBackendOpenCL::FreeDenoiser
+========================
+*/
 void idPathTracerBackendOpenCL::FreeDenoiser() {
 	Release( denoiser.radiance );
 	Release( denoiser.scratch );
@@ -598,6 +628,11 @@ void idPathTracerBackendOpenCL::FreeDenoiser() {
 	denoiseHistoryValid = false;
 }
 
+/*
+========================
+idPathTracerBackendOpenCL::ResizeDenoiser
+========================
+*/
 bool idPathTracerBackendOpenCL::ResizeDenoiser( int width, int height ) {
 	if ( width == denoiseWidth && height == denoiseHeight ) return true;
 	PT_CL_CHECK( clFinish( queue ) );
@@ -626,6 +661,11 @@ bool idPathTracerBackendOpenCL::ResizeDenoiser( int width, int height ) {
 	return true;
 }
 
+/*
+========================
+idPathTracerBackendOpenCL::FreePostprocess
+========================
+*/
 void idPathTracerBackendOpenCL::FreePostprocess() {
 	Release( postprocess.highlights );
 	Release( postprocess.scratch );
@@ -635,6 +675,11 @@ void idPathTracerBackendOpenCL::FreePostprocess() {
 	postWidth = postHeight = postScale = 0;
 }
 
+/*
+========================
+idPathTracerBackendOpenCL::ResizePostprocess
+========================
+*/
 bool idPathTracerBackendOpenCL::ResizePostprocess( int width, int height, float radius ) {
 	const int scale = PT_ClPostprocessScale( height, radius );
 	if ( width == postWidth && height == postHeight && scale == postScale ) return true;
@@ -894,6 +939,11 @@ float idPathTracerBackendOpenCL::ElapsedMs( size_t firstEvent, size_t endEvent )
 	return end > begin ? (float)( ( end - begin ) * 1.0e-6 ) : 0.0f;
 }
 
+/*
+========================
+idPathTracerBackendOpenCL::ReleaseEvents
+========================
+*/
 void idPathTracerBackendOpenCL::ReleaseEvents() {
 	for ( int i = 0; i < events.Num(); i++ ) {
 		if ( events[i] ) clReleaseEvent( events[i] );
@@ -1074,8 +1124,16 @@ void idPathTracerBackendOpenCL::GetStats( ptBackendStats_t &stats ) const {
 }
 
 /*
+===============================================================================
+
+	Factory
+
+===============================================================================
+*/
+
+/*
 ========================
-Factory
+PT_OpenCL_IsAvailable
 ========================
 */
 bool PT_OpenCL_IsAvailable() {
@@ -1085,10 +1143,10 @@ bool PT_OpenCL_IsAvailable() {
 #ifndef CL_DEVICE_PCI_BUS_INFO_KHR
 #define CL_DEVICE_PCI_BUS_INFO_KHR	0x410F
 typedef struct {
-	cl_uint pci_domain;
-	cl_uint pci_bus;
-	cl_uint pci_device;
-	cl_uint pci_function;
+	cl_uint	pci_domain;
+	cl_uint	pci_bus;
+	cl_uint	pci_device;
+	cl_uint	pci_function;
 } cl_device_pci_bus_info_khr;
 #endif
 #define PT_CL_DEVICE_PCI_BUS_ID_NV		0x4008
@@ -1142,7 +1200,7 @@ bool PT_OpenCL_GetDeviceInfo( ptBackendDeviceInfo_t &info ) {
 		idStr::snPrintf( info.pciBusId, sizeof( info.pciBusId ), "%08x:%02x:%02x.%x",
 			pci.pci_domain, pci.pci_bus, pci.pci_device, pci.pci_function );
 	} else if ( extensions.Find( "cl_nv_device_attribute_query" ) >= 0 ) {
-		cl_uint bus = 0, slot = 0, domain = 0;
+		cl_uint	bus = 0, slot = 0, domain = 0;
 		if ( clGetDeviceInfo( id, PT_CL_DEVICE_PCI_BUS_ID_NV, sizeof( bus ), &bus, NULL ) == CL_SUCCESS
 			&& clGetDeviceInfo( id, PT_CL_DEVICE_PCI_SLOT_ID_NV, sizeof( slot ), &slot, NULL ) == CL_SUCCESS ) {
 			clGetDeviceInfo( id, PT_CL_DEVICE_PCI_DOMAIN_ID_NV, sizeof( domain ), &domain, NULL );
@@ -1160,6 +1218,11 @@ bool PT_OpenCL_GetDeviceInfo( ptBackendDeviceInfo_t &info ) {
 	return true;
 }
 
+/*
+========================
+PT_OpenCL_CreateBackend
+========================
+*/
 idPathTracerBackend *PT_OpenCL_CreateBackend() {
 	return new idPathTracerBackendOpenCL();
 }

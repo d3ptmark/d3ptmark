@@ -34,6 +34,12 @@ idCVar r_ptMode( "r_ptMode", "0", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER, "
 idCVar r_ptDebug( "r_ptDebug", "0", CVAR_RENDERER | CVAR_BOOL, "print path tracer scene / timing info" );
 
 // quality
+
+/*
+========================
+PT_PresetCompletion
+========================
+*/
 static void PT_PresetCompletion( const idCmdArgs &args, void ( *callback )( const char * ) ) {
 	for ( int i = 0; i < PT_QUALITY_PRESET_COUNT; i++ ) {
 		callback( va( "%s %s", args.Argv( 0 ), ptQualityPresets[i].name ) );
@@ -132,20 +138,20 @@ static const ptBackendFactory_t ptBackendFactories[] = {
 typedef struct {
 	idPathTracerBackend *	backend;
 	idPathTracerScene *		scene;
-	bool					initFailed;		// latched until r_ptBackend changes or vid_restart
+	bool	initFailed;	// latched until r_ptBackend changes or vid_restart
 
 	// last traced view, for accumulation invalidation
-	ptRenderParams_t		prevParams;
-	unsigned int			prevContentHash;
-	unsigned int			prevStructureHash;
-	float					prevLightScale;
-	bool					havePrev;
+	ptRenderParams_t	prevParams;
+	unsigned int		prevContentHash;
+	unsigned int		prevStructureHash;
+	float				prevLightScale;
+	bool				havePrev;
 
 	// display
-	GLuint					glTexture;
-	int						texWidth;
-	int						texHeight;
-	idList<byte>			pixels;
+	GLuint			glTexture;
+	int				texWidth;
+	int				texHeight;
+	idList<byte>	pixels;
 } ptFrontEnd_t;
 
 static ptFrontEnd_t pt;
@@ -153,6 +159,11 @@ static ptFrontEnd_t pt;
 static bool ptApplyingPreset = false;
 static const char *ptLastPresetName = "med";
 
+/*
+========================
+PT_PresetChanged
+========================
+*/
 static void PT_PresetChanged( const idCVar &cvar ) {
 	if ( ptApplyingPreset ) {
 		return;
@@ -180,6 +191,11 @@ static void PT_PresetChanged( const idCVar &cvar ) {
 	ptApplyingPreset = false;
 }
 
+/*
+========================
+PT_QualityChanged
+========================
+*/
 static void PT_QualityChanged( const idCVar & ) {
 	if ( ptApplyingPreset || PT_FindCustomQualityPreset( r_ptPreset.GetString() ) ) {
 		return;
@@ -198,6 +214,11 @@ static void PT_QualityChanged( const idCVar & ) {
 	}
 }
 
+/*
+========================
+PT_InitQualityPresets
+========================
+*/
 static void PT_InitQualityPresets() {
 	idCVar *qualityCVars[] = { &r_ptRenderScale, &r_ptSamplesPerPixel, &r_ptMaxDepth, &r_ptMaxLightSamples };
 	if ( !CVar_RegisterChangeCallback( r_ptPreset, PT_PresetChanged ) ) {
@@ -211,6 +232,11 @@ static void PT_InitQualityPresets() {
 	PT_PresetChanged( r_ptPreset );
 }
 
+/*
+========================
+RB_PT_InvalidateImages
+========================
+*/
 void RB_PT_InvalidateImages( void ) {
 	if ( pt.backend ) {
 		pt.backend->ResetAccumulation();
@@ -544,7 +570,7 @@ static void PT_ApplyProgressiveQuality( ptRenderParams_t &p, int frame ) {
 
 /*
 ========================
-PT_ViewChanged
+PT_TraceSettingsChanged
 ========================
 */
 static bool PT_TraceSettingsChanged( const ptRenderParams_t &a, const ptRenderParams_t &b ) {
@@ -568,6 +594,11 @@ static bool PT_TraceSettingsChanged( const ptRenderParams_t &a, const ptRenderPa
 		|| a.volFalloff != b.volFalloff || a.volMaxDist != b.volMaxDist;
 }
 
+/*
+========================
+PT_ViewChanged
+========================
+*/
 static bool PT_ViewChanged( const ptRenderParams_t &a, const ptRenderParams_t &b ) {
 	const float eps = 1e-4f;
 	for ( int i = 0; i < 3; i++ ) {
@@ -642,6 +673,15 @@ static void PT_BlitToViewport( const byte *rgba, int width, int height ) {
 
 /*
 ========================
+PT_CancelFailedCapture
+========================
+*/
+static void PT_CancelFailedCapture() {
+	if ( !tr.takingScreenshot && !R_PT_BenchmarkActive() ) RB_PT_CancelCaptures();
+}
+
+/*
+========================
 RB_PT_DrawView
 
 Returns false when the view should be drawn by the OpenGL renderer instead
@@ -649,10 +689,6 @@ Returns false when the view should be drawn by the OpenGL renderer instead
 remote cameras and portal skies).
 ========================
 */
-static void PT_CancelFailedCapture() {
-	if ( !tr.takingScreenshot && !R_PT_BenchmarkActive() ) RB_PT_CancelCaptures();
-}
-
 bool RB_PT_DrawView( void ) {
 	const viewDef_t *viewDef = backEnd.viewDef;
 	if ( !r_ptDraw.GetBool() || !viewDef || !viewDef->viewEntitys || viewDef->isSubview ) {
@@ -792,6 +828,11 @@ bool RB_PT_DrawView( void ) {
 	return true;
 }
 
+/*
+========================
+RB_PT_SaveImage
+========================
+*/
 bool RB_PT_SaveImage( const char *fileName, int format ) {
 	const int width = pt.texWidth, height = pt.texHeight;
 	if ( width <= 0 || height <= 0 || pt.pixels.Num() != width * height * 4 ) {

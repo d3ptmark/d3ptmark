@@ -6,6 +6,11 @@
 class idCommon;
 idCommon *common = NULL;	// idlib links against the engine global
 
+/*
+========================
+Check
+========================
+*/
 static void Check( const idStr &actual, const char *expected ) {
 	if ( actual != expected ) {
 		std::fprintf( stderr, "Unexpected report encoding: %s, expected %s\n", actual.c_str(), expected );
@@ -13,6 +18,11 @@ static void Check( const idStr &actual, const char *expected ) {
 	}
 }
 
+/*
+========================
+main
+========================
+*/
 int main() {
 	int frame = 17;
 	for ( const char *bad : { "", "-1", "1x", " 1", "+1", "2147483647", "999999999999999999999999" } ) {

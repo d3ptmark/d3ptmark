@@ -23,19 +23,40 @@ static idCVar r_ptCaptureReport( "r_ptCaptureReport", "1", CVAR_RENDERER | CVAR_
 static idCVar r_ptCaptureTelemetry( "r_ptCaptureTelemetry", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
 	"sample GPU (NVML, Linux sysfs/fdinfo or Windows D3DKMT) and CPU sensors at approximately 1 Hz during renderer captures" );
 
-// the engine never changes LC_NUMERIC, so printf formatting uses '.' decimals
+/*
+========================
+Number
+
+The engine never changes LC_NUMERIC, so printf formatting uses '.' decimals
+========================
+*/
 static idStr Number( double value ) {
 	return idStr::Format( "%.6f", value );
 }
 
+/*
+========================
+Integer
+========================
+*/
 static idStr Integer( long long value ) {
 	return idStr::Format( "%lld", value );
 }
 
+/*
+========================
+Write
+========================
+*/
 static bool Write( idFile *file, const idStr &text ) {
 	return file && file->Write( text.c_str(), text.Length() ) == text.Length();
 }
 
+/*
+========================
+PhaseIndex
+========================
+*/
 static int PhaseIndex( const char *phase ) {
 	if ( !idStr::Cmp( phase, "opengl" ) ) return 1;
 	if ( !idStr::Cmp( phase, "pathtrace" ) ) return 2;
@@ -44,6 +65,11 @@ static int PhaseIndex( const char *phase ) {
 	return 0;
 }
 
+/*
+========================
+PhaseName
+========================
+*/
 static const char *PhaseName( int phase ) {
 	static const char *names[] = { "setup", "opengl", "pathtrace", "image_save", "advance" };
 	return names[phase];
@@ -73,6 +99,11 @@ static struct {
 	idGpuTelemetry *gpuTelemetry = NULL, *cpuTelemetry = NULL;
 } report;
 
+/*
+========================
+Settings
+========================
+*/
 static idDict Settings() {
 	idDict result;
 	const idDict *all = cvarSystem->MoveCVarsToDict( -1 );
@@ -88,6 +119,11 @@ static idDict Settings() {
 	return result;
 }
 
+/*
+========================
+DictJson
+========================
+*/
 static idStr DictJson( const idDict &dict ) {
 	idStr result = "{";
 	for ( int i = 0; i < dict.GetNumKeyVals(); i++ ) {
@@ -98,6 +134,11 @@ static idStr DictJson( const idDict &dict ) {
 	return result + "\n  }";
 }
 
+/*
+========================
+StartupJson
+========================
+*/
 static idStr StartupJson() {
 	const idStrList &args = Com_GetStartupArguments();
 	idStr result = "[";
@@ -109,6 +150,11 @@ static idStr StartupJson() {
 	return result + "]";
 }
 
+/*
+========================
+Metadata
+========================
+*/
 static bool Metadata( const char *status, const char *reason ) {
 	idStr text = "{\n  \"schema_version\":1,\n  \"status\":" + PT_ReportJsonString( status )
 		+ ",\n  \"reason\":" + PT_ReportJsonString( reason )
@@ -135,7 +181,7 @@ static bool Metadata( const char *status, const char *reason ) {
 		+ ",\n  \"cpu_logical_cores\":"
 #ifdef D3_SDL1
 		+ "null"
-#elif defined(D3_SDL3)
+#elif defined( D3_SDL3 )
 		+ Number( SDL_GetNumLogicalCPUCores() )
 #else
 		+ Number( SDL_GetCPUCount() )
@@ -199,12 +245,22 @@ static bool Metadata( const char *status, const char *reason ) {
 	return replaced;
 }
 
+/*
+========================
+TelemetryHeader
+========================
+*/
 static idStr TelemetryHeader() {
 	idStr header = "elapsed_s,source_frame,phase";
 	for ( int i = 0; i < PT_GPU_SENSOR_COUNT; i++ ) { header += ","; header += ptGpuSensorColumns[i]; }
 	return header + ",sensor_errors\n";
 }
 
+/*
+========================
+TelemetryWorker
+========================
+*/
 static int SDLCALL TelemetryWorker( void * ) {
 	ptGpuTelemetrySample_t sample;
 	while ( !report.stopTelemetry.load() ) {
@@ -227,18 +283,33 @@ static int SDLCALL TelemetryWorker( void * ) {
 	return 0;
 }
 
+/*
+========================
+AppendItem
+========================
+*/
 static void AppendItem( idStr &list, const char *separator, const idStr &item ) {
 	if ( item.IsEmpty() ) return;
 	if ( !list.IsEmpty() ) list += separator;
 	list += item;
 }
 
+/*
+========================
+CloseTelemetry
+========================
+*/
 static void CloseTelemetry() {
 	delete report.gpuTelemetry;
 	delete report.cpuTelemetry;
 	report.gpuTelemetry = report.cpuTelemetry = NULL;
 }
 
+/*
+========================
+StartTelemetry
+========================
+*/
 static void StartTelemetry() {
 	report.telemetryStatus = "disabled";
 	report.telemetrySource.Clear();
@@ -307,6 +378,11 @@ static void StartTelemetry() {
 		report.telemetryFailure.c_str() );
 }
 
+/*
+========================
+StopTelemetry
+========================
+*/
 static void StopTelemetry() {
 	report.stopTelemetry.store( true );
 	if ( report.thread ) { SDL_WaitThread( report.thread, NULL ); report.thread = NULL; }
@@ -319,6 +395,11 @@ static void StopTelemetry() {
 	CloseTelemetry();
 }
 
+/*
+========================
+R_PT_ReportActive
+========================
+*/
 bool R_PT_ReportActive() { return report.active; }
 const char *R_PT_ReportDirectory() { return report.active ? report.directory.c_str() : NULL; }
 
@@ -341,6 +422,11 @@ void R_PT_ReportSettings() {
 	report.effective = current;
 }
 
+/*
+========================
+R_PT_ReportBegin
+========================
+*/
 bool R_PT_ReportBegin( const idCmdArgs &args, const char *mode, const char *source, int requestedSpp, int startFrame, int endFrame ) {
 	if ( report.active ) {
 		common->Warning( "A PT capture report is already active" );
@@ -438,10 +524,20 @@ bool R_PT_ReportBegin( const idCmdArgs &args, const char *mode, const char *sour
 	return true;
 }
 
+/*
+========================
+R_PT_ReportPhase
+========================
+*/
 void R_PT_ReportPhase( const char *phase ) {
 	if ( report.active ) report.phase.store( PhaseIndex( phase ) );
 }
 
+/*
+========================
+R_PT_ReportFrameBegin
+========================
+*/
 void R_PT_ReportFrameBegin( int sourceFrame, double sourceTimeSeconds, const char *phase ) {
 	if ( !report.active ) return;
 	if ( report.frameActive ) {
@@ -462,6 +558,11 @@ void R_PT_ReportFrameBegin( int sourceFrame, double sourceTimeSeconds, const cha
 	if ( report.rows == 0 && !Metadata( "running", "" ) ) report.failed = true;
 }
 
+/*
+========================
+R_PT_ReportRendered
+========================
+*/
 void R_PT_ReportRendered( const ptRenderParams_t &params, const ptBackendStats_t &stats,
 	double sceneMilliseconds, double backendMilliseconds, double readbackMilliseconds ) {
 	if ( !report.active || !report.frameActive ) return;
@@ -474,6 +575,11 @@ void R_PT_ReportRendered( const ptRenderParams_t &params, const ptBackendStats_t
 	report.lastStats = stats;
 }
 
+/*
+========================
+R_PT_ReportFrameEnd
+========================
+*/
 bool R_PT_ReportFrameEnd( const char *image, int imageWidth, int imageHeight, double imageMilliseconds, double screenMilliseconds ) {
 	if ( !report.active ) return true;
 	if ( !report.frameActive ) {
@@ -514,6 +620,11 @@ bool R_PT_ReportFrameEnd( const char *image, int imageWidth, int imageHeight, do
 	return true;
 }
 
+/*
+========================
+R_PT_ReportTick
+========================
+*/
 void R_PT_ReportTick() {
 	if ( !report.active ) return;
 	if ( !report.sensorWarning && report.sensorError.load() ) {
@@ -522,6 +633,11 @@ void R_PT_ReportTick() {
 	}
 }
 
+/*
+========================
+R_PT_ReportEnd
+========================
+*/
 void R_PT_ReportEnd( bool completed, const char *reason ) {
 	if ( !report.active ) return;
 	if ( report.settings && !report.failed ) R_PT_ReportSettings();

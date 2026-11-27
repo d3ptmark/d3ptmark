@@ -103,7 +103,7 @@ extern "C" cudaError_t LaunchDenoisingKernel( const ptCudaDenoiseBuffers_t *buff
 			SVGFTemporalKernel<<<gridSize, blockSize, 0, stream>>>(
 				s.radiance, b.guides[frameSlot], b.guides[prev], s.history[prev], s.moments[prev],
 				filteredBuffer, s.moments[frameSlot], p, *previousParams,
-				signal == 2 ? (volumeHistoryValid ? 1 : 0) : historyValid, signal );
+				signal == 2 ? ( volumeHistoryValid ? 1 : 0 ) : historyValid, signal );
 		}
 		cudaError_t error = cudaGetLastError();
 		if ( error != cudaSuccess ) return error;
@@ -146,7 +146,7 @@ extern "C" cudaError_t LaunchDenoisingDebugKernel( const ptCudaDenoiseBuffers_t 
 	const ptRenderParams_t &p = *params;
 	const dim3 blockSize( TILE_SIZE, TILE_SIZE );
 	const dim3 gridSize( ( p.width + TILE_SIZE - 1 ) / TILE_SIZE, ( p.height + TILE_SIZE - 1 ) / TILE_SIZE );
-	const ptCudaDenoiseSignal_t &s = buffers->signals[p.denoiseDebugSignal == 2 ? 2 : (p.denoiseDebugSignal == 1 ? 1 : 0)];
+	const ptCudaDenoiseSignal_t &s = buffers->signals[p.denoiseDebugSignal == 2 ? 2 : ( p.denoiseDebugSignal == 1 ? 1 : 0 )];
 	SVGFDenoiseDebugKernel<<<gridSize, blockSize, 0, stream>>>(
 		buffers->guides[frameSlot], s.moments[frameSlot], s.history[frameSlot],
 		output, p.width, p.height, p.denoiseDebug, p.captureTargetFrames > 0 );

@@ -37,18 +37,33 @@ static void PT_Reserve( idList<T> &list, int needed ) {
 	}
 }
 
+/*
+========================
+PT_TransformPoint
+========================
+*/
 static ID_INLINE void PT_TransformPoint( const float *m, const float *in, float *out ) {
 	out[0] = m[0] * in[0] + m[4] * in[1] + m[8]  * in[2] + m[12];
 	out[1] = m[1] * in[0] + m[5] * in[1] + m[9]  * in[2] + m[13];
 	out[2] = m[2] * in[0] + m[6] * in[1] + m[10] * in[2] + m[14];
 }
 
+/*
+========================
+PT_TransformVector
+========================
+*/
 static ID_INLINE void PT_TransformVector( const float *m, const float *in, float *out ) {
 	out[0] = m[0] * in[0] + m[4] * in[1] + m[8]  * in[2];
 	out[1] = m[1] * in[0] + m[5] * in[1] + m[9]  * in[2];
 	out[2] = m[2] * in[0] + m[6] * in[1] + m[10] * in[2];
 }
 
+/*
+========================
+PT_NormalizeOr
+========================
+*/
 static ID_INLINE void PT_NormalizeOr( float *v, float dx, float dy, float dz ) {
 	const float len = sqrtf( v[0] * v[0] + v[1] * v[1] + v[2] * v[2] );
 	if ( len > 1e-6f ) {
@@ -121,6 +136,11 @@ void idPathTracerScene::FlushMaterialsAndTextures() {
 	needTextureFlush = false;
 }
 
+/*
+========================
+idPathTracerScene::InvalidateMaterials
+========================
+*/
 void idPathTracerScene::InvalidateMaterials() {
 	materials.Clear();
 	materialEmission.Clear();
@@ -502,6 +522,12 @@ void idPathTracerScene::AddViewLight( const viewLight_t *vLight, bool physical )
 }
 
 #ifdef PT_PHYSICAL
+
+/*
+========================
+idPathTracerScene::AddPhysicalLights
+========================
+*/
 void idPathTracerScene::AddPhysicalLights( const viewDef_t *view ) {
 	const idRenderWorldLocal *world = static_cast<const idRenderWorldLocal *>( view->renderWorld );
 	idList<float> registers;

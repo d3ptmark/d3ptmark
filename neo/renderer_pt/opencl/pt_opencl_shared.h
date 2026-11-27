@@ -24,10 +24,10 @@
 // texel pool. offset is in RGBA8 texels; width == 0 means "not resident" and
 // the samplers return white, exactly like a NULL cudaTexture_t::data.
 typedef struct {
-	int width;
-	int height;
-	unsigned int offset;
-	int pad;
+	int				width;
+	int				height;
+	unsigned int	offset;
+	int				pad;
 } ptClTexture_t;
 
 // ptRay_t::flags
@@ -38,17 +38,17 @@ typedef struct {
 #define PT_WEAPON_CLEARANCE		32.0f	// rays leaving the weapon ignore world geometry this close
 
 typedef struct {
-	float normal[3];			// unperturbed surface normal for temporal validation
-	float depth;				// <= 0: no single surface suitable for demodulation
-	float position[3];			// world-space hit position for camera reprojection
-	int materialIndex;
-	float albedo[3];			// bounded modulation color
-	int historyValid;			// dynamic entities have spatial filtering only
-	float shadingNormal[3];
-	float roughness;
-	float specularAlbedo[3];
-	int coverage;				// ptDenoiseCoverage_t
-	float volumeDepth;			// first visible layer, independent of surface eligibility
+	float	normal[3];		// unperturbed surface normal for temporal validation
+	float	depth;			// <= 0: no single surface suitable for demodulation
+	float	position[3];	// world-space hit position for camera reprojection
+	int		materialIndex;
+	float	albedo[3];		// bounded modulation color
+	int		historyValid;	// dynamic entities have spatial filtering only
+	float	shadingNormal[3];
+	float	roughness;
+	float	specularAlbedo[3];
+	int		coverage;		// ptDenoiseCoverage_t
+	float	volumeDepth;	// first visible layer, independent of surface eligibility
 } ptClDenoiseGuide_t;
 
 enum ptDenoiseCoverage_t {

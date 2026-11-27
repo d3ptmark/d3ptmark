@@ -7,10 +7,20 @@
 ===============================================================================
 */
 
+/*
+========================
+PT_PostFinite
+========================
+*/
 PT_INLINE float PT_PostFinite( float value ) {
 	return isfinite( value ) ? fmin( fmax( value, 0.0f ), 1.0e12f ) : 0.0f;
 }
 
+/*
+========================
+PT_PostSample
+========================
+*/
 PT_INLINE float4 PT_PostSample( __global const float4 *image, int width, int height, float x, float y ) {
 	x = fmin( fmax( x, 0.0f ), (float)( width - 1 ) );
 	y = fmin( fmax( y, 0.0f ), (float)( height - 1 ) );
@@ -25,6 +35,11 @@ PT_INLINE float4 PT_PostSample( __global const float4 *image, int width, int hei
 		( a.z * ( 1 - tx ) + b.z * tx ) * ( 1 - ty ) + ( c.z * ( 1 - tx ) + d.z * tx ) * ty, 0 );
 }
 
+/*
+========================
+PT_PostHighlights
+========================
+*/
 __kernel void PT_PostHighlights( __global const float4 *hdr, __global float4 *highlights, int width, int height,
 								 int smallWidth, int smallHeight, int scale, float sceneThreshold ) {
 	const int x = get_global_id( 0 ), y = get_global_id( 1 );
@@ -45,6 +60,11 @@ __kernel void PT_PostHighlights( __global const float4 *hdr, __global float4 *hi
 	highlights[y * smallWidth + x] = (float4)( sum.x * inverse, sum.y * inverse, sum.z * inverse, 0 );
 }
 
+/*
+========================
+PT_PostBlur
+========================
+*/
 __kernel void PT_PostBlur( __global const float4 *input, __global float4 *output, int width, int height, float sigma, int horizontal ) {
 	const int x = get_global_id( 0 ), y = get_global_id( 1 );
 	if ( x >= width || y >= height ) return;
@@ -62,6 +82,11 @@ __kernel void PT_PostBlur( __global const float4 *input, __global float4 *output
 	output[y * width + x] = (float4)( sum.x / total, sum.y / total, sum.z / total, 0 );
 }
 
+/*
+========================
+PT_PostComposite
+========================
+*/
 __kernel void PT_PostComposite( __global const float4 *hdr, __global const float4 *blurred, __global float4 *output,
 								int width, int height, int smallWidth, int smallHeight, int scale,
 								float bloomStrength, float flareStrength ) {

@@ -110,6 +110,11 @@ const char *PT_CL_ProgramSource() {
 	return ptOpenCLProgram;
 }
 
+/*
+========================
+PT_CL_DeviceString
+========================
+*/
 static idStr PT_CL_DeviceString( cl_device_id device, cl_device_info param ) {
 	size_t size = 0;
 	if ( clGetDeviceInfo( device, param, 0, NULL, &size ) != CL_SUCCESS || size == 0 ) return "";
@@ -120,6 +125,11 @@ static idStr PT_CL_DeviceString( cl_device_id device, cl_device_info param ) {
 	return value.Ptr();	// stops at the terminating NUL
 }
 
+/*
+========================
+PT_CL_SortWorkGroup
+========================
+*/
 static size_t PT_CL_SortWorkGroup( cl_device_id device ) {
 	size_t maxGroup = 256;
 	clGetDeviceInfo( device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof( maxGroup ), &maxGroup, NULL );
@@ -130,6 +140,11 @@ static size_t PT_CL_SortWorkGroup( cl_device_id device ) {
 
 #define PT_CL_INTEL_LARGE_GRF	"-cl-intel-256-GRF-per-thread"
 
+/*
+========================
+PT_CL_IsIntel
+========================
+*/
 static bool PT_CL_IsIntel( cl_device_id device ) {
 	const idStr vendor = PT_CL_DeviceString( device, CL_DEVICE_VENDOR );
 	return vendor.Find( "Intel" ) >= 0 || vendor.Find( "intel" ) >= 0;
@@ -168,6 +183,11 @@ idStr PT_CL_BuildOptions( cl_device_id device ) {
 	return options;
 }
 
+/*
+========================
+PT_CL_Hash
+========================
+*/
 static unsigned long long PT_CL_Hash( unsigned long long hash, const idStr &text ) {
 	for ( int i = 0; i < text.Length(); i++ ) {
 		hash ^= (unsigned char)text[i];
@@ -176,6 +196,11 @@ static unsigned long long PT_CL_Hash( unsigned long long hash, const idStr &text
 	return hash;
 }
 
+/*
+========================
+PT_CL_ProgramKey
+========================
+*/
 idStr PT_CL_ProgramKey( cl_device_id device, const char *extraSource ) {
 	unsigned long long hash = 14695981039346656037ULL;
 	hash = PT_CL_Hash( hash, PT_CL_ProgramSource() );
@@ -192,7 +217,7 @@ idStr PT_CL_ProgramKey( cl_device_id device, const char *extraSource ) {
 
 /*
 ========================
-PT_CL_CreateProgram
+PT_CL_BuildFromSource
 ========================
 */
 static cl_int PT_CL_BuildFromSource( ptClProgram_t &prog, const char *extraSource, const idStr &options ) {
@@ -203,6 +228,11 @@ static cl_int PT_CL_BuildFromSource( ptClProgram_t &prog, const char *extraSourc
 	return clBuildProgram( prog.program, 1, &prog.device, options.c_str(), NULL, NULL );
 }
 
+/*
+========================
+PT_CL_AppendBuildLog
+========================
+*/
 static void PT_CL_AppendBuildLog( const ptClProgram_t &prog, idStr &log ) {
 	if ( !prog.program ) return;
 	size_t size = 0;
@@ -219,6 +249,11 @@ static void PT_CL_AppendBuildLog( const ptClProgram_t &prog, idStr &log ) {
 	}
 }
 
+/*
+========================
+PT_CL_CreateProgram
+========================
+*/
 cl_int PT_CL_CreateProgram( ptClProgram_t &prog, cl_context context, cl_device_id device, const char *extraSource,
 							const idList<byte> *cachedBinary, idList<byte> *binaryOut,
 							idStr &log ) {
@@ -296,6 +331,11 @@ cl_int PT_CL_CreateProgram( ptClProgram_t &prog, cl_context context, cl_device_i
 	return CL_SUCCESS;
 }
 
+/*
+========================
+PT_CL_DestroyProgram
+========================
+*/
 void PT_CL_DestroyProgram( ptClProgram_t &prog ) {
 	for ( int i = 0; i < PT_CL_KERNEL_COUNT; i++ ) {
 		if ( prog.kernels[i] ) clReleaseKernel( prog.kernels[i] );
@@ -313,6 +353,11 @@ void PT_CL_DestroyProgram( ptClProgram_t &prog ) {
 ===============================================================================
 */
 
+/*
+========================
+PT_CL_NextEvent
+========================
+*/
 static cl_event *PT_CL_NextEvent( ptClProgram_t &prog ) {
 	if ( !prog.events ) return NULL;
 	prog.events->Append( NULL );
@@ -334,6 +379,11 @@ struct ptClArgs_t {
 	}
 };
 
+/*
+========================
+PT_CL_Launch2D
+========================
+*/
 cl_int PT_CL_Launch2D( ptClProgram_t &prog, cl_command_queue queue, int kernel, int width, int height ) {
 	if ( width <= 0 || height <= 0 ) return CL_SUCCESS;
 	size_t local[2] = { PT_CL_TILE_SIZE, PT_CL_TILE_SIZE };
@@ -348,6 +398,11 @@ cl_int PT_CL_Launch2D( ptClProgram_t &prog, cl_command_queue queue, int kernel, 
 	return clEnqueueNDRangeKernel( queue, prog.kernels[kernel], 2, NULL, global, local, 0, NULL, PT_CL_NextEvent( prog ) );
 }
 
+/*
+========================
+PT_CL_Launch1D
+========================
+*/
 static cl_int PT_CL_Launch1D( ptClProgram_t &prog, cl_command_queue queue, int kernel, size_t count, size_t group ) {
 	if ( count == 0 ) return CL_SUCCESS;
 	if ( group == 0 ) {
@@ -358,11 +413,21 @@ static cl_int PT_CL_Launch1D( ptClProgram_t &prog, cl_command_queue queue, int k
 	return clEnqueueNDRangeKernel( queue, prog.kernels[kernel], 1, NULL, &global, &group, 0, NULL, PT_CL_NextEvent( prog ) );
 }
 
+/*
+========================
+PT_CL_Fill
+========================
+*/
 cl_int PT_CL_Fill( ptClProgram_t &prog, cl_command_queue queue, cl_mem buffer, unsigned char value, size_t bytes ) {
 	if ( bytes == 0 ) return CL_SUCCESS;
 	return clEnqueueFillBuffer( queue, buffer, &value, 1, 0, bytes, 0, NULL, PT_CL_NextEvent( prog ) );
 }
 
+/*
+========================
+PT_CL_Copy
+========================
+*/
 cl_int PT_CL_Copy( ptClProgram_t &prog, cl_command_queue queue, cl_mem src, cl_mem dst, size_t bytes ) {
 	if ( bytes == 0 ) return CL_SUCCESS;
 	return clEnqueueCopyBuffer( queue, src, dst, 0, 0, bytes, 0, NULL, PT_CL_NextEvent( prog ) );
@@ -525,6 +590,11 @@ cl_int PT_CL_LaunchDenoising( ptClProgram_t &prog, cl_command_queue queue, const
 	return CL_SUCCESS;
 }
 
+/*
+========================
+PT_CL_LaunchDenoisingDebug
+========================
+*/
 cl_int PT_CL_LaunchDenoisingDebug( ptClProgram_t &prog, cl_command_queue queue, const ptClDenoiseBuffers_t &buffers,
 								   cl_mem output, const ptRenderParams_t &p, int frameSlot ) {
 	const ptClDenoiseSignal_t &s = buffers.signals[p.denoiseDebugSignal == 2 ? 2 : ( p.denoiseDebugSignal == 1 ? 1 : 0 )];
@@ -536,15 +606,20 @@ cl_int PT_CL_LaunchDenoisingDebug( ptClProgram_t &prog, cl_command_queue queue, 
 
 /*
 ========================
-PT_CL_Postprocess
-
-Host half of PT_Postprocess, identical clamping and pass order.
+PT_CL_IsFinite
 ========================
 */
 static bool PT_CL_IsFinite( float value ) {
 	return !FLOAT_IS_NAN( value );	// idlib: all-ones exponent, so NaN and both infinities
 }
 
+/*
+========================
+PT_CL_Postprocess
+
+Host half of PT_Postprocess, identical clamping and pass order.
+========================
+*/
 cl_int PT_CL_Postprocess( ptClProgram_t &prog, cl_command_queue queue, const ptClPostprocessBuffers_t &buffers,
 						  cl_mem hdr, int width, int height, float exposure, float threshold, float radius,
 						  float bloom, float flare ) {
@@ -576,6 +651,11 @@ cl_int PT_CL_Postprocess( ptClProgram_t &prog, cl_command_queue queue, const ptC
 	return PT_CL_Launch2D( prog, queue, PT_CL_POST_COMPOSITE, width, height );
 }
 
+/*
+========================
+PT_CL_LaunchPostprocess
+========================
+*/
 cl_int PT_CL_LaunchPostprocess( ptClProgram_t &prog, cl_command_queue queue, const ptClPostprocessBuffers_t &buffers,
 								cl_mem hdr, const ptRenderParams_t &p ) {
 	return PT_CL_Postprocess( prog, queue, buffers, hdr, p.width, p.height, p.exposure, p.bloomThreshold,

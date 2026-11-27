@@ -18,30 +18,30 @@ __device__ __forceinline__ bool TraceShadowRay_RT(
 	float oX, float oY, float oZ,
 	float dX, float dY, float dZ,
 	float maxDist,
-	const ptVertex_t* vertices,
-	const ptTriangle_t* triangles,
-	const int* triIndices,
-	const ptBVHNode_t* bvhNodes
+	const ptVertex_t *vertices,
+	const ptTriangle_t *triangles,
+	const int *triIndices,
+	const ptBVHNode_t *bvhNodes
 ) {
-	float idX = 1.0f / (fabsf(dX) > 1e-8f ? dX : copysignf(1e-8f, dX));
-	float idY = 1.0f / (fabsf(dY) > 1e-8f ? dY : copysignf(1e-8f, dY));
-	float idZ = 1.0f / (fabsf(dZ) > 1e-8f ? dZ : copysignf(1e-8f, dZ));
+	float idX = 1.0f / ( fabsf( dX ) > 1e-8f ? dX : copysignf( 1e-8f, dX ) );
+	float idY = 1.0f / ( fabsf( dY ) > 1e-8f ? dY : copysignf( 1e-8f, dY ) );
+	float idZ = 1.0f / ( fabsf( dZ ) > 1e-8f ? dZ : copysignf( 1e-8f, dZ ) );
 
-	for (int ni = 0; ni >= 0; ) {
-		const ptBVHNode_t& nd = bvhNodes[ni];
+	for ( int ni = 0; ni >= 0; ) {
+		const ptBVHNode_t &nd = bvhNodes[ni];
 
-		if (!IntersectAABB_Simple(oX, oY, oZ, idX, idY, idZ, nd.bounds, maxDist)) {
+		if ( !IntersectAABB_Simple( oX, oY, oZ, idX, idY, idZ, nd.bounds, maxDist ) ) {
 			ni = nd.escapeIndex;
 			continue;
 		}
 
-		if (nd.leftChild == -1) {
+		if ( nd.leftChild == -1 ) {
 			// Leaf
-			for (int i = 0; i < nd.primitiveCount; i++) {
+			for ( int i = 0; i < nd.primitiveCount; i++ ) {
 				int ti = triIndices[nd.firstPrimitive + i];
-				float t = IntersectTriangle_Simple(oX, oY, oZ, dX, dY, dZ,
-												   vertices, triangles[ti]);
-				if (t > 0.001f && t < maxDist) {
+				float t = IntersectTriangle_Simple( oX, oY, oZ, dX, dY, dZ,
+												   vertices, triangles[ti] );
+				if ( t > 0.001f && t < maxDist ) {
 					return true;
 				}
 			}
@@ -62,37 +62,37 @@ BVH closest-hit traversal with barycentric output
 __device__ __forceinline__ float TraceRay_RT(
 	float oX, float oY, float oZ,
 	float dX, float dY, float dZ,
-	const ptVertex_t* vertices,
-	const ptTriangle_t* triangles,
-	const int* triIndices,
-	const ptBVHNode_t* bvhNodes,
-	int& outTriIdx,
-	float& outU,
-	float& outV
+	const ptVertex_t *vertices,
+	const ptTriangle_t *triangles,
+	const int *triIndices,
+	const ptBVHNode_t *bvhNodes,
+	int &outTriIdx,
+	float &outU,
+	float &outV
 ) {
-	float idX = 1.0f / (fabsf(dX) > 1e-8f ? dX : copysignf(1e-8f, dX));
-	float idY = 1.0f / (fabsf(dY) > 1e-8f ? dY : copysignf(1e-8f, dY));
-	float idZ = 1.0f / (fabsf(dZ) > 1e-8f ? dZ : copysignf(1e-8f, dZ));
+	float idX = 1.0f / ( fabsf( dX ) > 1e-8f ? dX : copysignf( 1e-8f, dX ) );
+	float idY = 1.0f / ( fabsf( dY ) > 1e-8f ? dY : copysignf( 1e-8f, dY ) );
+	float idZ = 1.0f / ( fabsf( dZ ) > 1e-8f ? dZ : copysignf( 1e-8f, dZ ) );
 
 	float nearest = 1e30f;
 	outTriIdx = -1;
 
-	for (int ni = 0; ni >= 0; ) {
-		const ptBVHNode_t& nd = bvhNodes[ni];
+	for ( int ni = 0; ni >= 0; ) {
+		const ptBVHNode_t &nd = bvhNodes[ni];
 
-		if (!IntersectAABB_Simple(oX, oY, oZ, idX, idY, idZ, nd.bounds, nearest)) {
+		if ( !IntersectAABB_Simple( oX, oY, oZ, idX, idY, idZ, nd.bounds, nearest ) ) {
 			ni = nd.escapeIndex;
 			continue;
 		}
 
-		if (nd.leftChild == -1) {
+		if ( nd.leftChild == -1 ) {
 			// leaf
-			for (int i = 0; i < nd.primitiveCount; i++) {
+			for ( int i = 0; i < nd.primitiveCount; i++ ) {
 				int ti = triIndices[nd.firstPrimitive + i];
 				float bu, bv;
-				float t = IntersectTriangleUV_Simple(oX, oY, oZ, dX, dY, dZ,
-													 vertices, triangles[ti], bu, bv);
-				if (t > 0.0f && t < nearest) {
+				float t = IntersectTriangleUV_Simple( oX, oY, oZ, dX, dY, dZ,
+													 vertices, triangles[ti], bu, bv );
+				if ( t > 0.0f && t < nearest ) {
 					nearest = t;
 					outTriIdx = ti;
 					outU = bu;
@@ -113,39 +113,39 @@ TriangleDrawRayTracedKernel
 ========================
 */
 __global__ void TriangleDrawRayTracedKernel(
-	const ptVertex_t* vertices,
-	const ptTriangle_t* triangles,
-	const ptBVHNode_t* bvhNodes,
-	const int* triIndices,
-	const ptMaterial_t* materials,
-	const cudaTexture_t* textures,
-	const ptLight_t* lights,
+	const ptVertex_t *vertices,
+	const ptTriangle_t *triangles,
+	const ptBVHNode_t *bvhNodes,
+	const int *triIndices,
+	const ptMaterial_t *materials,
+	const cudaTexture_t *textures,
+	const ptLight_t *lights,
 	int numLights,
-	float* framebuffer,
+	float *framebuffer,
 	const ptRenderParams_t params
 ) {
-	PT_UNPACK_RENDER_PARAMS(params);
+	PT_UNPACK_RENDER_PARAMS( params );
 	int x = blockIdx.x * blockDim.x + threadIdx.x;
 	int y = blockIdx.y * blockDim.y + threadIdx.y;
 
-	if (x >= width || y >= height) {
+	if ( x >= width || y >= height ) {
 		return;
 	}
 
-	int pixelIndex = (y * width + x) * 4;
+	int pixelIndex = ( y * width + x ) * 4;
 
 	// generate primary ray
-	float halfTanX = tanf(fov * 0.5f * 3.14159265f / 180.0f);
-	float halfTanY = tanf(fovY * 0.5f * 3.14159265f / 180.0f);
+	float halfTanX = tanf( fov * 0.5f * 3.14159265f / 180.0f );
+	float halfTanY = tanf( fovY * 0.5f * 3.14159265f / 180.0f );
 
-	float su = (2.0f * ((float)x + 0.5f) / (float)width  - 1.0f) * halfTanX;
-	float sv = (2.0f * ((float)y + 0.5f) / (float)height - 1.0f) * halfTanY;
+	float su = ( 2.0f * ( (float)x + 0.5f ) / (float)width  - 1.0f ) * halfTanX;
+	float sv = ( 2.0f * ( (float)y + 0.5f ) / (float)height - 1.0f ) * halfTanY;
 
 	float rayDirX = cameraForward[0] + su * cameraRight[0] + sv * cameraUp[0];
 	float rayDirY = cameraForward[1] + su * cameraRight[1] + sv * cameraUp[1];
 	float rayDirZ = cameraForward[2] + su * cameraRight[2] + sv * cameraUp[2];
 
-	float il = rsqrtf(rayDirX * rayDirX + rayDirY * rayDirY + rayDirZ * rayDirZ);
+	float il = rsqrtf( rayDirX * rayDirX + rayDirY * rayDirY + rayDirZ * rayDirZ );
 	rayDirX *= il;
 	rayDirY *= il;
 	rayDirZ *= il;
@@ -163,31 +163,31 @@ __global__ void TriangleDrawRayTracedKernel(
 	const float REFLECTIVITY = 0.15f;
 	int alphaSkips = 0;
 	const int MAX_ALPHA_SKIPS = 8;
-	float biasOffset = fmaxf(rayOffset, 0.01f);
+	float biasOffset = fmaxf( rayOffset, 0.01f );
 
-	for (int bounce = 0; bounce < MAX_BOUNCES; bounce++) {
+	for ( int bounce = 0; bounce < MAX_BOUNCES; bounce++ ) {
 
 		int hitIdx;
 		float hitU, hitV;
-		float hitT = TraceRay_RT(rayOrigX, rayOrigY, rayOrigZ,
+		float hitT = TraceRay_RT( rayOrigX, rayOrigY, rayOrigZ,
 								 rayDirX, rayDirY, rayDirZ,
 								 vertices, triangles, triIndices, bvhNodes,
-								 hitIdx, hitU, hitV);
+								 hitIdx, hitU, hitV );
 
-		if (hitIdx < 0) {
+		if ( hitIdx < 0 ) {
 			// sky / miss — use sky color parameters
 			float upDot = rayDirY; // approximate up = Y
 			float skyR, skyG, skyB;
-			if (upDot > 0.0f) {
-				float t = fminf(upDot, 1.0f);
-				skyR = skyColorHorizon[0] * (1.0f - t) + skyColorZenith[0] * t;
-				skyG = skyColorHorizon[1] * (1.0f - t) + skyColorZenith[1] * t;
-				skyB = skyColorHorizon[2] * (1.0f - t) + skyColorZenith[2] * t;
+			if ( upDot > 0.0f ) {
+				float t = fminf( upDot, 1.0f );
+				skyR = skyColorHorizon[0] * ( 1.0f - t ) + skyColorZenith[0] * t;
+				skyG = skyColorHorizon[1] * ( 1.0f - t ) + skyColorZenith[1] * t;
+				skyB = skyColorHorizon[2] * ( 1.0f - t ) + skyColorZenith[2] * t;
 			} else {
-				float t = fminf(-upDot, 1.0f);
-				skyR = skyColorHorizon[0] * (1.0f - t) + skyColorGround[0] * t;
-				skyG = skyColorHorizon[1] * (1.0f - t) + skyColorGround[1] * t;
-				skyB = skyColorHorizon[2] * (1.0f - t) + skyColorGround[2] * t;
+				float t = fminf( -upDot, 1.0f );
+				skyR = skyColorHorizon[0] * ( 1.0f - t ) + skyColorGround[0] * t;
+				skyG = skyColorHorizon[1] * ( 1.0f - t ) + skyColorGround[1] * t;
+				skyB = skyColorHorizon[2] * ( 1.0f - t ) + skyColorGround[2] * t;
 			}
 			colorR += throughR * skyR * skyIntensity;
 			colorG += throughG * skyG * skyIntensity;
@@ -195,7 +195,7 @@ __global__ void TriangleDrawRayTracedKernel(
 			break;
 		}
 
-		const ptTriangle_t& tri = triangles[hitIdx];
+		const ptTriangle_t &tri = triangles[hitIdx];
 		int i0 = tri.vertexIndices[0];
 		int i1 = tri.vertexIndices[1];
 		int i2 = tri.vertexIndices[2];
@@ -208,7 +208,7 @@ __global__ void TriangleDrawRayTracedKernel(
 		float nx = w0 * vertices[i0].normal[0] + w1 * vertices[i1].normal[0] + w2 * vertices[i2].normal[0];
 		float ny = w0 * vertices[i0].normal[1] + w1 * vertices[i1].normal[1] + w2 * vertices[i2].normal[1];
 		float nz = w0 * vertices[i0].normal[2] + w1 * vertices[i1].normal[2] + w2 * vertices[i2].normal[2];
-		float nIL = rsqrtf(nx * nx + ny * ny + nz * nz + 1e-12f);
+		float nIL = rsqrtf( nx * nx + ny * ny + nz * nz + 1e-12f );
 		nx *= nIL;
 		ny *= nIL;
 		nz *= nIL;
@@ -225,51 +225,51 @@ __global__ void TriangleDrawRayTracedKernel(
 		float pZ = rayOrigZ + rayDirZ * hitT;
 
 		// material lookup
-		const ptMaterial_t& mat = materials[tri.materialIndex];
+		const ptMaterial_t &mat = materials[tri.materialIndex];
 		float albR = mat.albedo[0];
 		float albG = mat.albedo[1];
 		float albB = mat.albedo[2];
 		float alpha = 1.0f;
 
 		const bool maskedAdditive = mat.additiveUsesAlpha == PT_ADDITIVE_LOCAL_MASK;
-		if (mat.blendMode == PT_BLEND_MODULATE_INVERSE || maskedAdditive) PT_ApplyTexTransform(mat, tu, tv);
-		if (mat.albedoTexture >= 0) {
+		if ( mat.blendMode == PT_BLEND_MODULATE_INVERSE || maskedAdditive ) PT_ApplyTexTransform( mat, tu, tv );
+		if ( mat.albedoTexture >= 0 ) {
 			float texColor[4];
-			if (mat.blendMode == PT_BLEND_MODULATE_INVERSE) {
-				SampleTextureSrgb(textures, mat.albedoTexture, tu, tv, texColor);
+			if ( mat.blendMode == PT_BLEND_MODULATE_INVERSE ) {
+				SampleTextureSrgb( textures, mat.albedoTexture, tu, tv, texColor );
 			} else {
-				SampleTexture(textures, mat.albedoTexture, tu, tv, texColor);
+				SampleTexture( textures, mat.albedoTexture, tu, tv, texColor );
 			}
 			albR *= texColor[0];
 			albG *= texColor[1];
 			albB *= texColor[2];
 			alpha = texColor[3];
 		}
-		if (maskedAdditive) {
+		if ( maskedAdditive ) {
 			float color[4] = { albR, albG, albB, alpha };
-			PT_ApplyVertexColor(mat, vertices, tri, w0, w1, w2, color);
+			PT_ApplyVertexColor( mat, vertices, tri, w0, w1, w2, color );
 			albR = color[0];
 			albG = color[1];
 			albB = color[2];
-			alpha = PT_AdditiveMaskAlpha(mat, textures, vertices, tri, w0, w1, w2, rawTu, rawTv);
+			alpha = PT_AdditiveMaskAlpha( mat, textures, vertices, tri, w0, w1, w2, rawTu, rawTv );
 		}
-		if (mat.blendMode == PT_BLEND_MODULATE_INVERSE) {
+		if ( mat.blendMode == PT_BLEND_MODULATE_INVERSE ) {
 			float color[4] = { albR, albG, albB, alpha };
-			PT_ApplyVertexColor(mat, vertices, tri, w0, w1, w2, color);
-			throughR *= PT_ModulationFactor(color[0], mat.blendMode);
-			throughG *= PT_ModulationFactor(color[1], mat.blendMode);
-			throughB *= PT_ModulationFactor(color[2], mat.blendMode);
+			PT_ApplyVertexColor( mat, vertices, tri, w0, w1, w2, color );
+			throughR *= PT_ModulationFactor( color[0], mat.blendMode );
+			throughG *= PT_ModulationFactor( color[1], mat.blendMode );
+			throughB *= PT_ModulationFactor( color[2], mat.blendMode );
 			rayOrigX = pX + rayDirX * biasOffset;
 			rayOrigY = pY + rayDirY * biasOffset;
 			rayOrigZ = pZ + rayDirZ * biasOffset;
 			bounce--;
 			alphaSkips++;
-			if (alphaSkips >= MAX_ALPHA_SKIPS) break;
+			if ( alphaSkips >= MAX_ALPHA_SKIPS ) break;
 			continue;
 		}
 
 		// alpha test: perforated surface fails — skip through
-		if (mat.alphaTest > 0.0f && alpha < mat.alphaTest && alphaSkips < MAX_ALPHA_SKIPS) {
+		if ( mat.alphaTest > 0.0f && alpha < mat.alphaTest && alphaSkips < MAX_ALPHA_SKIPS ) {
 			rayOrigX = pX + rayDirX * biasOffset;
 			rayOrigY = pY + rayDirY * biasOffset;
 			rayOrigZ = pZ + rayDirZ * biasOffset;
@@ -279,7 +279,7 @@ __global__ void TriangleDrawRayTracedKernel(
 		}
 
 		// nearly invisible alpha blend — skip through
-		if (mat.blendMode == 1 && alpha < 0.05f && alphaSkips < MAX_ALPHA_SKIPS) {
+		if ( mat.blendMode == 1 && alpha < 0.05f && alphaSkips < MAX_ALPHA_SKIPS ) {
 			rayOrigX = pX + rayDirX * biasOffset;
 			rayOrigY = pY + rayDirY * biasOffset;
 			rayOrigZ = pZ + rayDirZ * biasOffset;
@@ -289,17 +289,17 @@ __global__ void TriangleDrawRayTracedKernel(
 		}
 
 		// lit noshadows decal overlays — blend over and continue
-		if (PT_IsLitDecal(mat) && alphaSkips < MAX_ALPHA_SKIPS) {
+		if ( PT_IsLitDecal( mat ) && alphaSkips < MAX_ALPHA_SKIPS ) {
 			float lum = albR * 0.2126f + albG * 0.7152f + albB * 0.0722f;
-			float decalAlpha = (lum < 0.02f) ? 0.0f : alpha;
+			float decalAlpha = ( lum < 0.02f ) ? 0.0f : alpha;
 
-			if (decalAlpha > 0.05f) {
+			if ( decalAlpha > 0.05f ) {
 				colorR += throughR * albR * decalAlpha * 0.5f;
 				colorG += throughG * albG * decalAlpha * 0.5f;
 				colorB += throughB * albB * decalAlpha * 0.5f;
-				throughR *= (1.0f - decalAlpha);
-				throughG *= (1.0f - decalAlpha);
-				throughB *= (1.0f - decalAlpha);
+				throughR *= ( 1.0f - decalAlpha );
+				throughG *= ( 1.0f - decalAlpha );
+				throughB *= ( 1.0f - decalAlpha );
 			}
 
 			rayOrigX = pX + rayDirX * biasOffset;
@@ -311,14 +311,14 @@ __global__ void TriangleDrawRayTracedKernel(
 		}
 
 		// ambient-only materials (self-illuminated overlays, particles, HUD)
-		if (mat.isAmbientOnly && alphaSkips < MAX_ALPHA_SKIPS) {
-			if (mat.blendMode == 2) {
+		if ( mat.isAmbientOnly && alphaSkips < MAX_ALPHA_SKIPS ) {
+			if ( mat.blendMode == 2 ) {
 				// additive
-				const float weight = PT_AdditiveOpacity(mat, alpha) * emissionBoost;
+				const float weight = PT_AdditiveOpacity( mat, alpha ) * emissionBoost;
 				colorR += throughR * albR * weight;
 				colorG += throughG * albG * weight;
 				colorB += throughB * albB * weight;
-			} else if (mat.blendMode == 3) {
+			} else if ( mat.blendMode == 3 ) {
 				// modulate
 				throughR *= albR;
 				throughG *= albG;
@@ -328,9 +328,9 @@ __global__ void TriangleDrawRayTracedKernel(
 				colorR += throughR * albR * alpha;
 				colorG += throughG * albG * alpha;
 				colorB += throughB * albB * alpha;
-				throughR *= (1.0f - alpha);
-				throughG *= (1.0f - alpha);
-				throughB *= (1.0f - alpha);
+				throughR *= ( 1.0f - alpha );
+				throughG *= ( 1.0f - alpha );
+				throughB *= ( 1.0f - alpha );
 			}
 
 			rayOrigX = pX + rayDirX * biasOffset;
@@ -342,8 +342,8 @@ __global__ void TriangleDrawRayTracedKernel(
 		}
 
 		// additive blending (non-ambient)
-		if (mat.blendMode == 2 && alphaSkips < MAX_ALPHA_SKIPS) {
-			const float weight = PT_AdditiveOpacity(mat, alpha);
+		if ( mat.blendMode == 2 && alphaSkips < MAX_ALPHA_SKIPS ) {
+			const float weight = PT_AdditiveOpacity( mat, alpha );
 			colorR += throughR * albR * weight;
 			colorG += throughG * albG * weight;
 			colorB += throughB * albB * weight;
@@ -357,7 +357,7 @@ __global__ void TriangleDrawRayTracedKernel(
 		}
 
 		// modulate blending (non-ambient)
-		if (mat.blendMode == 3 && alphaSkips < MAX_ALPHA_SKIPS) {
+		if ( mat.blendMode == 3 && alphaSkips < MAX_ALPHA_SKIPS ) {
 			throughR *= albR;
 			throughG *= albG;
 			throughB *= albB;
@@ -371,13 +371,13 @@ __global__ void TriangleDrawRayTracedKernel(
 		}
 
 		// alpha blend (non-ambient) — partial transparency
-		if (mat.blendMode == 1 && alpha < 0.95f && alphaSkips < MAX_ALPHA_SKIPS) {
+		if ( mat.blendMode == 1 && alpha < 0.95f && alphaSkips < MAX_ALPHA_SKIPS ) {
 			colorR += throughR * albR * alpha;
 			colorG += throughG * albG * alpha;
 			colorB += throughB * albB * alpha;
-			throughR *= (1.0f - alpha);
-			throughG *= (1.0f - alpha);
-			throughB *= (1.0f - alpha);
+			throughR *= ( 1.0f - alpha );
+			throughG *= ( 1.0f - alpha );
+			throughB *= ( 1.0f - alpha );
 
 			rayOrigX = pX + rayDirX * biasOffset;
 			rayOrigY = pY + rayDirY * biasOffset;
@@ -389,16 +389,16 @@ __global__ void TriangleDrawRayTracedKernel(
 
 		// emission contribution
 		float emission[3];
-		PT_SampleEmission(mat, textures, vertices, tri, w0, w1, w2, rawTu, rawTv, emission);
+		PT_SampleEmission( mat, textures, vertices, tri, w0, w1, w2, rawTu, rawTv, emission );
 		float emitR = emission[0] * emissionBoost;
 		float emitG = emission[1] * emissionBoost;
 		float emitB = emission[2] * emissionBoost;
 		float emitLum = emitR * 0.2126f + emitG * 0.7152f + emitB * 0.0722f;
-		if (emitLum > 0.001f) {
+		if ( emitLum > 0.001f ) {
 			colorR += throughR * emitR;
 			colorG += throughG * emitG;
 			colorB += throughB * emitB;
-			if (emitLum > 0.5f) break;
+			if ( emitLum > 0.5f ) break;
 		}
 
 		// view direction (toward camera)
@@ -410,9 +410,9 @@ __global__ void TriangleDrawRayTracedKernel(
 		float diffR = 0.0f, diffG = 0.0f, diffB = 0.0f;
 		float specR = 0.0f, specG = 0.0f, specB = 0.0f;
 
-		for (int li = 0; li < numLights; li++) {
-			const ptLight_t& light = lights[li];
-			if (light.type == PT_LIGHT_AREA) {
+		for ( int li = 0; li < numLights; li++ ) {
+			const ptLight_t &light = lights[li];
+			if ( light.type == PT_LIGHT_AREA ) {
 				continue;  // area-light sampling is implemented in path-tracing mode
 			}
 
@@ -423,14 +423,14 @@ __global__ void TriangleDrawRayTracedKernel(
 			float lightColG = light.color[1];
 			float lightColB = light.color[2];
 
-			if (light.type == 0) {
+			if ( light.type == 0 ) {
 				// point light
 				float toL_x = light.position[0] - pX;
 				float toL_y = light.position[1] - pY;
 				float toL_z = light.position[2] - pZ;
 
 				float dSq = toL_x * toL_x + toL_y * toL_y + toL_z * toL_z;
-				float d = sqrtf(dSq + 1e-12f);
+				float d = sqrtf( dSq + 1e-12f );
 				float iD = 1.0f / d;
 				lX = toL_x * iD;
 				lY = toL_y * iD;
@@ -438,20 +438,20 @@ __global__ void TriangleDrawRayTracedKernel(
 				shadowDist = d;
 
 				float R = light.radius;
-				if (d >= R) continue;
+				if ( d >= R ) continue;
 
 				float ratio = d / R;
 				float falloff = 1.0f - ratio * ratio;
 				falloff = falloff * falloff;
 				atten = light.intensity * falloff;
 
-			} else if (light.type == 1) {
+			} else if ( light.type == 1 ) {
 				// directional light
 				lX = light.direction[0];
 				lY = light.direction[1];
 				lZ = light.direction[2];
 
-				float dIL = rsqrtf(lX * lX + lY * lY + lZ * lZ + 1e-12f);
+				float dIL = rsqrtf( lX * lX + lY * lY + lZ * lZ + 1e-12f );
 				lX *= dIL;
 				lY *= dIL;
 				lZ *= dIL;
@@ -466,7 +466,7 @@ __global__ void TriangleDrawRayTracedKernel(
 				float toL_z = light.position[2] - pZ;
 
 				float dSq = toL_x * toL_x + toL_y * toL_y + toL_z * toL_z;
-				float d = sqrtf(dSq + 1e-12f);
+				float d = sqrtf( dSq + 1e-12f );
 				float iD = 1.0f / d;
 				lX = toL_x * iD;
 				lY = toL_y * iD;
@@ -474,7 +474,7 @@ __global__ void TriangleDrawRayTracedKernel(
 				shadowDist = d;
 
 				float R = light.radius;
-				if (d >= R) continue;
+				if ( d >= R ) continue;
 
 				float ratio = d / R;
 				float falloff = 1.0f - ratio * ratio;
@@ -484,12 +484,12 @@ __global__ void TriangleDrawRayTracedKernel(
 				// cone attenuation
 				float negLX = -lX, negLY = -lY, negLZ = -lZ;
 				float spotCos = negLX * light.direction[0] + negLY * light.direction[1] + negLZ * light.direction[2];
-				float cosHalfAngle = cosf(light.coneAngle);
+				float cosHalfAngle = cosf( light.coneAngle );
 
 				float coneAtten = 0.0f;
-				if (spotCos > cosHalfAngle) {
-					float t = (spotCos - cosHalfAngle) / (1.0f - cosHalfAngle + 1e-6f);
-					coneAtten = powf(t, light.coneFalloff);
+				if ( spotCos > cosHalfAngle ) {
+					float t = ( spotCos - cosHalfAngle ) / ( 1.0f - cosHalfAngle + 1e-6f );
+					coneAtten = powf( t, light.coneFalloff );
 				} else {
 					continue;
 				}
@@ -497,17 +497,17 @@ __global__ void TriangleDrawRayTracedKernel(
 				atten = light.intensity * distAtten * coneAtten;
 
 				// projected texture modulation
-				if (light.projectedTextureIndex >= 0) {
+				if ( light.projectedTextureIndex >= 0 ) {
 					float localX = toL_x * light.right[0] + toL_y * light.right[1] + toL_z * light.right[2];
 					float localY = toL_x * light.up[0]    + toL_y * light.up[1]    + toL_z * light.up[2];
 					float localZ = toL_x * light.direction[0] + toL_y * light.direction[1] + toL_z * light.direction[2];
 
-					if (localZ > 0.001f) {
-						float projU = fmaxf(0.0f, fminf(1.0f, (localX / localZ) * 0.5f + 0.5f));
-						float projV = fmaxf(0.0f, fminf(1.0f, (localY / localZ) * 0.5f + 0.5f));
+					if ( localZ > 0.001f ) {
+						float projU = fmaxf( 0.0f, fminf( 1.0f, ( localX / localZ ) * 0.5f + 0.5f ) );
+						float projV = fmaxf( 0.0f, fminf( 1.0f, ( localY / localZ ) * 0.5f + 0.5f ) );
 
 						float projColor[4];
-						SampleTexture(textures, light.projectedTextureIndex, projU, projV, projColor);
+						SampleTexture( textures, light.projectedTextureIndex, projU, projV, projColor );
 						lightColR *= projColor[0];
 						lightColG *= projColor[1];
 						lightColB *= projColor[2];
@@ -517,20 +517,20 @@ __global__ void TriangleDrawRayTracedKernel(
 				}
 			}
 
-			if (atten <= 0.0f) continue;
+			if ( atten <= 0.0f ) continue;
 
 			// shadow ray
 			float sOx = pX + nx * biasOffset;
 			float sOy = pY + ny * biasOffset;
 			float sOz = pZ + nz * biasOffset;
 
-			if (TraceShadowRay_RT(sOx, sOy, sOz, lX, lY, lZ, shadowDist,
-								  vertices, triangles, triIndices, bvhNodes)) {
+			if ( TraceShadowRay_RT( sOx, sOy, sOz, lX, lY, lZ, shadowDist,
+								  vertices, triangles, triIndices, bvhNodes ) ) {
 				continue;
 			}
 
 			// Lambertian diffuse
-			float NdotL = fmaxf(nx * lX + ny * lY + nz * lZ, 0.0f);
+			float NdotL = fmaxf( nx * lX + ny * lY + nz * lZ, 0.0f );
 
 			diffR += lightColR * NdotL * atten;
 			diffG += lightColG * NdotL * atten;
@@ -540,13 +540,13 @@ __global__ void TriangleDrawRayTracedKernel(
 			float hX = lX + vX;
 			float hY = lY + vY;
 			float hZ = lZ + vZ;
-			float hIL = rsqrtf(hX * hX + hY * hY + hZ * hZ + 1e-12f);
+			float hIL = rsqrtf( hX * hX + hY * hY + hZ * hZ + 1e-12f );
 			hX *= hIL;
 			hY *= hIL;
 			hZ *= hIL;
 
-			float NdotH = fmaxf(nx * hX + ny * hY + nz * hZ, 0.0f);
-			float spec = powf(NdotH, SPECULAR_POWER);
+			float NdotH = fmaxf( nx * hX + ny * hY + nz * hZ, 0.0f );
+			float spec = powf( NdotH, SPECULAR_POWER );
 
 			specR += lightColR * spec * atten;
 			specG += lightColG * spec * atten;
@@ -580,7 +580,7 @@ __global__ void TriangleDrawRayTracedKernel(
 		throughB *= REFLECTIVITY * albB;
 
 		// early out if throughput is negligible
-		if (throughR + throughG + throughB < earlyTermThreshold) {
+		if ( throughR + throughG + throughB < earlyTermThreshold ) {
 			break;
 		}
 	}

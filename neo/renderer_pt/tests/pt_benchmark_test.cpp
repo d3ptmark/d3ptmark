@@ -3,8 +3,13 @@
 #include <cmath>
 #include <cstring>
 
-#define CHECK(x) do { if ( !(x) ) { fprintf( stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x ); return 1; } } while (0)
+#define CHECK( x ) do { if ( !( x ) ) { fprintf( stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x ); return 1; } } while ( 0 )
 
+/*
+========================
+main
+========================
+*/
 int main() {
 	CHECK( !PT_BenchmarkCanAdvance( false, 1000 ) );
 	CHECK( !PT_BenchmarkCanAdvance( true, 0 ) );
@@ -24,7 +29,7 @@ int main() {
 		for ( int preset = 1; preset <= 64; ++preset ) {
 			const int batch = PT_BenchmarkBatchSize( target, preset );
 			CHECK( batch > 0 && batch <= preset && target % batch == 0 );
-			CHECK( (target / batch) * batch == target );
+			CHECK( ( target / batch ) * batch == target );
 		}
 	}
 	CHECK( PT_BenchmarkBatchSize( 32, 4 ) == 4 );

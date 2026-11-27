@@ -45,6 +45,11 @@ static const unsigned int PT_PCI_VENDOR_NVIDIA	= 0x10de;
 static const unsigned int PT_PCI_VENDOR_AMD		= 0x1002;
 static const unsigned int PT_PCI_VENDOR_INTEL	= 0x8086;
 
+/*
+========================
+ptGpuTelemetrySample_t::Clear
+========================
+*/
 void ptGpuTelemetrySample_t::Clear() {
 	for ( int i = 0; i < PT_GPU_SENSOR_COUNT; i++ ) {
 		valid[i] = false;
@@ -53,6 +58,11 @@ void ptGpuTelemetrySample_t::Clear() {
 	errors.Clear();
 }
 
+/*
+========================
+ptGpuTelemetrySample_t::Fail
+========================
+*/
 void ptGpuTelemetrySample_t::Fail( ptGpuSensor_t sensor, const char *reason ) {
 	valid[sensor] = false;
 	if ( !errors.IsEmpty() ) errors += ";";
@@ -61,6 +71,11 @@ void ptGpuTelemetrySample_t::Fail( ptGpuSensor_t sensor, const char *reason ) {
 	errors += reason;
 }
 
+/*
+========================
+idGpuTelemetry::NotOffered
+========================
+*/
 void idGpuTelemetry::NotOffered( ptGpuSensor_t sensor, const char *reason ) {
 	if ( !unavailable.IsEmpty() ) unavailable += ";";
 	unavailable += ptGpuSensorNames[sensor];
@@ -68,7 +83,13 @@ void idGpuTelemetry::NotOffered( ptGpuSensor_t sensor, const char *reason ) {
 	unavailable += reason;
 }
 
-// monotonic seconds; Sys_MillisecondsPrecise is engine code, and the tests link idlib only
+/*
+========================
+Seconds
+
+Monotonic seconds; Sys_MillisecondsPrecise is engine code, and the tests link idlib only
+========================
+*/
 static double Seconds() {
 #ifdef _WIN32
 	LARGE_INTEGER frequency, counter;
@@ -82,30 +103,61 @@ static double Seconds() {
 #endif
 }
 
+/*
+========================
+Lower
+========================
+*/
 static idStr Lower( const idStr &text ) {
 	idStr result = text;
 	result.ToLower();
 	return result;
 }
 
+/*
+========================
+Contains
+========================
+*/
 static bool Contains( const idStr &text, const char *what ) {
 	return text.Find( what ) >= 0;
 }
 
+/*
+========================
+StartsWith
+========================
+*/
 static bool StartsWith( const idStr &text, const char *prefix ) {
 	return idStr::Cmpn( text.c_str(), prefix, idStr::Length( prefix ) ) == 0;
 }
 
+/*
+========================
+EndsWith
+========================
+*/
 static bool EndsWith( const idStr &text, const char *suffix ) {
 	const int length = idStr::Length( suffix );
 	return text.Length() >= length && idStr::Cmp( text.c_str() + text.Length() - length, suffix ) == 0;
 }
 
-// the characters from start to the end
+/*
+========================
+From
+
+The characters from start to the end
+========================
+*/
 static idStr From( const idStr &text, int start ) {
 	return text.Mid( start, text.Length() - start );
 }
 
+/*
+========================
+Trim
+========================
+*/
 static idStr Trim( const idStr &text ) {
 	int begin = 0, end = text.Length();
 	while ( begin < end && (unsigned char)text[begin] <= ' ' ) begin++;
@@ -113,6 +165,11 @@ static idStr Trim( const idStr &text ) {
 	return text.Mid( begin, end - begin );
 }
 
+/*
+========================
+SplitLines
+========================
+*/
 static void SplitLines( const idStr &text, idStrList &lines ) {
 	lines.Clear();
 	int start = 0;
@@ -124,17 +181,33 @@ static void SplitLines( const idStr &text, idStrList &lines ) {
 	}
 }
 
-// case-insensitive equality or containment, so "Radeon RX 6800" matches "AMD Radeon RX 6800"
+/*
+========================
+SameDeviceName
+
+case-insensitive equality or containment, so "Radeon RX 6800" matches "AMD Radeon RX 6800"
+========================
+*/
 static bool SameDeviceName( const char *a, const char *b ) {
 	const idStr x = Lower( Trim( a ) ), y = Lower( Trim( b ) );
 	if ( x.IsEmpty() || y.IsEmpty() ) return false;
 	return x == y || ( x.Length() >= 6 && Contains( y, x.c_str() ) ) || ( y.Length() >= 6 && Contains( x, y.c_str() ) );
 }
 
+/*
+========================
+Code
+========================
+*/
 static idStr Code( long long code ) {
 	return idStr::Format( "%lld", code );
 }
 
+/*
+========================
+PT_GPU_ParsePciBusId
+========================
+*/
 bool PT_GPU_ParsePciBusId( const char *text, unsigned int &domain, unsigned int &bus,
 		unsigned int &device, unsigned int &function ) {
 	unsigned int d = 0, b = 0, s = 0, f = 0;
@@ -151,6 +224,11 @@ bool PT_GPU_ParsePciBusId( const char *text, unsigned int &domain, unsigned int 
 	return true;
 }
 
+/*
+========================
+PT_GPU_VendorFromName
+========================
+*/
 unsigned int PT_GPU_VendorFromName( const char *name ) {
 	const idStr text = " " + Lower( name ) + " ";
 	if ( Contains( text, "nvidia" ) || Contains( text, "geforce" ) || Contains( text, "quadro" )
@@ -161,6 +239,11 @@ unsigned int PT_GPU_VendorFromName( const char *name ) {
 	return 0;
 }
 
+/*
+========================
+PT_GPU_OfferedSensors
+========================
+*/
 idStr PT_GPU_OfferedSensors( const idGpuTelemetry &telemetry ) {
 	idStr result;
 	for ( int i = 0; i < PT_GPU_SENSOR_COUNT; i++ ) {
@@ -181,6 +264,12 @@ idStr PT_GPU_OfferedSensors( const idGpuTelemetry &telemetry ) {
 
 #ifdef _WIN32
 typedef HMODULE ptLibrary_t;
+
+/*
+========================
+PT_LoadLibrary
+========================
+*/
 static ptLibrary_t PT_LoadLibrary( const char *name ) { return LoadLibraryA( name ); }
 static void PT_FreeLibrary( ptLibrary_t library ) { if ( library ) FreeLibrary( library ); }
 template<typename T> static bool PT_LoadSymbol( ptLibrary_t library, const char *name, T &function ) {
@@ -189,6 +278,12 @@ template<typename T> static bool PT_LoadSymbol( ptLibrary_t library, const char 
 }
 #else
 typedef void *ptLibrary_t;
+
+/*
+========================
+PT_LoadLibrary
+========================
+*/
 static ptLibrary_t PT_LoadLibrary( const char *name ) { return dlopen( name, RTLD_NOW | RTLD_LOCAL ); }
 static void PT_FreeLibrary( ptLibrary_t library ) { if ( library ) dlclose( library ); }
 template<typename T> static bool PT_LoadSymbol( ptLibrary_t library, const char *name, T &function ) {
@@ -398,7 +493,13 @@ private:
 
 #ifndef _WIN32
 
-// sysfs and procfs files report a size of 0 (or 4096), so read until EOF
+/*
+========================
+ReadText
+
+Sysfs and procfs files report a size of 0 (or 4096), so read until EOF
+========================
+*/
 static bool ReadText( const char *path, idStr &text ) {
 	text.Clear();
 	FILE *file = fopen( path, "r" );
@@ -411,6 +512,11 @@ static bool ReadText( const char *path, idStr &text ) {
 	return ok;
 }
 
+/*
+========================
+ReadNumber
+========================
+*/
 static bool ReadNumber( const char *path, double &value ) {
 	idStr text;
 	if ( !ReadText( path, text ) ) return false;
@@ -422,7 +528,13 @@ static bool ReadNumber( const char *path, double &value ) {
 	return true;
 }
 
-// sorted entries, without "." names
+/*
+========================
+ListDirectory
+
+Sorted entries, without "." names
+========================
+*/
 static void ListDirectory( const char *path, idStrList &entries ) {
 	entries.Clear();
 	DIR *directory = opendir( path );
@@ -434,6 +546,11 @@ static void ListDirectory( const char *path, idStrList &entries ) {
 	entries.Sort();
 }
 
+/*
+========================
+UeventValue
+========================
+*/
 static idStr UeventValue( const idStr &uevent, const char *key ) {
 	idStrList lines;
 	SplitLines( uevent, lines );
@@ -444,13 +561,24 @@ static idStr UeventValue( const idStr &uevent, const char *key ) {
 	return "";
 }
 
+/*
+========================
+IsCardEntry
+========================
+*/
 static bool IsCardEntry( const idStr &name ) {
 	if ( !StartsWith( name, "card" ) || name.Length() == 4 ) return false;
 	for ( int i = 4; i < name.Length(); i++ ) if ( name[i] < '0' || name[i] > '9' ) return false;
 	return true;
 }
 
-// MHz of the active level ("1: 1800Mhz *") in an amdgpu pp_dpm_* table
+/*
+========================
+ParseActiveDpm
+
+MHz of the active level ("1: 1800Mhz *") in an amdgpu pp_dpm_* table
+========================
+*/
 static bool ParseActiveDpm( const idStr &table, double &mhz ) {
 	idStrList lines;
 	SplitLines( table, lines );
@@ -469,11 +597,22 @@ static bool ParseActiveDpm( const idStr &table, double &mhz ) {
 	return false;
 }
 
+/*
+========================
+Exists
+========================
+*/
 static bool Exists( const idStr &path ) {
 	return !path.IsEmpty() && access( path.c_str(), F_OK ) == 0;
 }
 
-// why a sensor file is unusable: missing, or present but not readable by this user
+/*
+========================
+Unreadable
+
+Why a sensor file is unusable: missing, or present but not readable by this user
+========================
+*/
 static idStr Unreadable( const idStr &path, const char *missing ) {
 	return Exists( path ) ? path + " is readable by root only" : idStr( missing );
 }
@@ -486,11 +625,11 @@ static idStr Unreadable( const idStr &path, const char *missing ) {
 	read, which is what the benchmark puts on the GPU.
 */
 struct ptDrmEngine_t {
-	idStr		name;
-	double		busyNs;			// summed over clients
-	double		cycles;			// busy cycles, summed over clients
-	double		totalCycles;	// GPU timestamp cycles
-	bool		haveBusy, haveCycles, haveTotal;
+	idStr	name;
+	double	busyNs;			// summed over clients
+	double	cycles;			// busy cycles, summed over clients
+	double	totalCycles;	// GPU timestamp cycles
+	bool	haveBusy, haveCycles, haveTotal;
 
 	ptDrmEngine_t() : busyNs( 0.0 ), cycles( 0.0 ), totalCycles( 0.0 ), haveBusy( false ), haveCycles( false ), haveTotal( false ) {}
 };
@@ -519,6 +658,11 @@ struct ptDrmUsage_t {
 	}
 };
 
+/*
+========================
+DrmBytes
+========================
+*/
 static double DrmBytes( const idStr &value ) {
 	const char *begin = value.c_str();
 	char *end = NULL;
@@ -532,6 +676,11 @@ static double DrmBytes( const idStr &value ) {
 	return bytes;
 }
 
+/*
+========================
+ParseDrmFdinfo
+========================
+*/
 static void ParseDrmFdinfo( const idStr &text, const idStr &pdev, idStrList &seenClients, ptDrmUsage_t &usage ) {
 	idStrList lines, keys, values;
 	SplitLines( text, lines );
@@ -583,7 +732,13 @@ static void ParseDrmFdinfo( const idStr &text, const idStr &pdev, idStrList &see
 	}
 }
 
-// busiest engine between two readings, in percent; false if nothing to compare
+/*
+========================
+DrmUtilization
+
+Busiest engine between two readings, in percent; false if nothing to compare
+========================
+*/
 static bool DrmUtilization( const ptDrmUsage_t &before, const ptDrmUsage_t &after, double seconds, double &percent ) {
 	bool any = false;
 	percent = 0.0;
@@ -857,18 +1012,23 @@ private:
 		return false;
 	}
 
-	idStr						source;
-	idList<sensor_t>			sensors;
-	bool						offered[PT_GPU_SENSOR_COUNT];
+	idStr				source;
+	idList<sensor_t>	sensors;
+	bool				offered[PT_GPU_SENSOR_COUNT];
 
-	idStr						fdinfoDirectory, pdev;
-	bool						drmUtilization, drmMemory, havePreviousDrm;
-	ptDrmUsage_t				previousDrm;
-	double						previousDrmTime;
+	idStr			fdinfoDirectory, pdev;
+	bool			drmUtilization, drmMemory, havePreviousDrm;
+	ptDrmUsage_t	previousDrm;
+	double			previousDrmTime;
 };
 
 #endif // !_WIN32
 
+/*
+========================
+PT_GPU_OpenSysfsTelemetry
+========================
+*/
 idGpuTelemetry *PT_GPU_OpenSysfsTelemetry( const char *sysRoot, const ptGpuTelemetryTarget_t &target, idStr &failure,
 		const char *procSelf ) {
 #ifdef _WIN32
@@ -1075,18 +1235,23 @@ private:
 		havePreviousEnergy = true;
 	}
 
-	bool					offered[PT_GPU_SENSOR_COUNT];
-	idStr					statPath, temperaturePath;
-	bool					havePreviousStat;
-	double					previousBusy, previousTotal;
-	idStrList				energyPaths;
-	idList<double>			energyRanges, energyPrevious;
-	bool					havePreviousEnergy;
-	double					previousEnergyTime;
+	bool			offered[PT_GPU_SENSOR_COUNT];
+	idStr			statPath, temperaturePath;
+	bool			havePreviousStat;
+	double			previousBusy, previousTotal;
+	idStrList		energyPaths;
+	idList<double>	energyRanges, energyPrevious;
+	bool			havePreviousEnergy;
+	double			previousEnergyTime;
 };
 
 #endif // !_WIN32
 
+/*
+========================
+PT_CPU_OpenLinuxTelemetry
+========================
+*/
 idGpuTelemetry *PT_CPU_OpenLinuxTelemetry( const char *sysRoot, const char *procRoot, idStr &failure ) {
 #ifdef _WIN32
 	(void)sysRoot; (void)procRoot;
@@ -1121,23 +1286,23 @@ struct ptKmtCloseAdapter_t { ptKmtHandle_t hAdapter; };
 struct ptKmtQueryAdapterInfo_t { ptKmtHandle_t hAdapter; int Type; void *pPrivateDriverData; UINT PrivateDriverDataSize; };
 struct ptKmtAdapterAddress_t { UINT BusNumber; UINT DeviceNumber; UINT FunctionNumber; };
 struct ptKmtAdapterPerfData_t {
-	UINT32 PhysicalAdapterIndex;
-	ULONGLONG MemoryFrequency, MaxMemoryFrequency, MaxMemoryFrequencyOC, MemoryBandwidth, PCIEBandwidth;
-	ULONG FanRPM;
-	ULONG Power;			// tenths of a percent of the power limit
-	ULONG Temperature;		// tenths of a degree Celsius
-	UCHAR PowerStateOverride;
+	UINT32		PhysicalAdapterIndex;
+	ULONGLONG	MemoryFrequency, MaxMemoryFrequency, MaxMemoryFrequencyOC, MemoryBandwidth, PCIEBandwidth;
+	ULONG		FanRPM;
+	ULONG		Power;			// tenths of a percent of the power limit
+	ULONG		Temperature;	// tenths of a degree Celsius
+	UCHAR		PowerStateOverride;
 };
 struct ptKmtAdapterPerfDataCaps_t {
-	UINT32 PhysicalAdapterIndex;
-	ULONGLONG MaxMemoryBandwidth, MaxPCIEBandwidth;
-	ULONG MaxFanRPM, TemperatureMax, TemperatureWarning;
+	UINT32		PhysicalAdapterIndex;
+	ULONGLONG	MaxMemoryBandwidth, MaxPCIEBandwidth;
+	ULONG		MaxFanRPM, TemperatureMax, TemperatureWarning;
 };
 struct ptKmtNodePerfData_t {
-	UINT32 NodeOrdinal, PhysicalAdapterIndex;
-	ULONGLONG Frequency, MaxFrequency, MaxFrequencyOC;
-	ULONG Voltage, VoltageMax, VoltageMaxOC;
-	ULONGLONG MaxTransitionLatency;
+	UINT32		NodeOrdinal, PhysicalAdapterIndex;
+	ULONGLONG	Frequency, MaxFrequency, MaxFrequencyOC;
+	ULONG		Voltage, VoltageMax, VoltageMaxOC;
+	ULONGLONG	MaxTransitionLatency;
 };
 enum {
 	PT_KMTQAITYPE_ADAPTERADDRESS		= 6,
@@ -1149,7 +1314,7 @@ enum {
 typedef LONG ptPdhStatus_t;
 typedef HANDLE ptPdhHandle_t;
 struct ptPdhValue_t {
-	DWORD CStatus;
+	DWORD	CStatus;
 	union { LONG longValue; double doubleValue; LONGLONG largeValue; LPCSTR ansiValue; LPCWSTR wideValue; };
 };
 struct ptPdhItem_t { LPWSTR szName; ptPdhValue_t FmtValue; };
@@ -1159,6 +1324,11 @@ static const ptPdhStatus_t	PT_PDH_MORE_DATA			= (ptPdhStatus_t)0x800007D2L;
 static const DWORD			PT_PDH_CSTATUS_VALID_DATA	= 0;
 static const DWORD			PT_PDH_CSTATUS_NEW_DATA		= 1;
 
+/*
+========================
+Narrow
+========================
+*/
 static idStr Narrow( const wchar_t *text ) {
 	const int bytes = WideCharToMultiByte( CP_UTF8, 0, text, -1, NULL, 0, NULL, NULL );
 	if ( bytes <= 1 ) return "";
@@ -1175,11 +1345,16 @@ struct ptNamedValue_t {
 	double	value;
 };
 
+/*
+========================
+AddNamedValue
+========================
+*/
 static void AddNamedValue( idList<ptNamedValue_t> &list, const idStr &name, double value ) {
 	for ( int i = 0; i < list.Num(); i++ ) {
 		if ( list[i].name == name ) { list[i].value += value; return; }
 	}
-	ptNamedValue_t entry;
+	ptNamedValue_t	entry;
 	entry.name = name;
 	entry.value = value;
 	list.Append( entry );
@@ -1308,12 +1483,12 @@ private:
 	}
 
 	struct candidate_t {
-		LUID			luid;
-		unsigned int	vendor;
-		idStr			name;
-		SIZE_T			dedicatedMemory;
-		bool			haveAddress;
-		ptKmtAdapterAddress_t address;
+		LUID					luid;
+		unsigned int			vendor;
+		idStr					name;
+		SIZE_T					dedicatedMemory;
+		bool					haveAddress;
+		ptKmtAdapterAddress_t	address;
 	};
 
 	bool SelectAdapter( const ptGpuTelemetryTarget_t &target, idStr &failure ) {
@@ -1615,14 +1790,14 @@ private:
 		return found;
 	}
 
-	ptLibrary_t			pdh;
-	ptPdhHandle_t		query, temperature, energy;
-	bool				tenthsKelvin;
-	bool				offered[PT_GPU_SENSOR_COUNT];
-	bool				havePreviousTimes;
+	ptLibrary_t		pdh;
+	ptPdhHandle_t	query, temperature, energy;
+	bool			tenthsKelvin;
+	bool			offered[PT_GPU_SENSOR_COUNT];
+	bool			havePreviousTimes;
 	unsigned long long	previousIdle, previousTotal;
-	bool				havePreviousEnergy;
-	double				previousEnergy, previousEnergyTime;
+	bool	havePreviousEnergy;
+	double	previousEnergy, previousEnergyTime;
 
 	ptPdhStatus_t	( WINAPI *pdhOpen )( LPCWSTR, DWORD_PTR, ptPdhHandle_t * );
 	ptPdhStatus_t	( WINAPI *pdhAdd )( ptPdhHandle_t, LPCWSTR, DWORD_PTR, ptPdhHandle_t * );
@@ -1665,6 +1840,11 @@ idGpuTelemetry *PT_GPU_OpenTelemetry( const ptGpuTelemetryTarget_t &target, idSt
 	return NULL;
 }
 
+/*
+========================
+PT_CPU_OpenTelemetry
+========================
+*/
 idGpuTelemetry *PT_CPU_OpenTelemetry( idStr &failure ) {
 	failure.Clear();
 #ifdef _WIN32

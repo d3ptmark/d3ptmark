@@ -7,6 +7,11 @@
 #include <limits>
 #include <vector>
 
+/*
+========================
+Check
+========================
+*/
 static void Check( bool condition, const char *label ) {
 	if ( !condition ) {
 		std::fprintf( stderr, "FAIL: %s\n", label );
@@ -14,6 +19,11 @@ static void Check( bool condition, const char *label ) {
 	}
 }
 
+/*
+========================
+Cuda
+========================
+*/
 static void Cuda( cudaError_t error ) {
 	if ( error != cudaSuccess ) {
 		std::fprintf( stderr, "CUDA: %s\n", cudaGetErrorString( error ) );
@@ -22,10 +32,10 @@ static void Cuda( cudaError_t error ) {
 }
 
 struct fixture_t {
-	int width, height;
-	float *input, *history;
-	ptCudaPostprocessBuffers_t buffers;
-	std::vector<float> source, originalHistory;
+	int							width, height;
+	float						*input, *history;
+	ptCudaPostprocessBuffers_t	buffers;
+	std::vector<float>			source, originalHistory;
 
 	fixture_t( int w, int h ) : width( w ), height( h ), buffers(),
 		source( w * h * 4, 0 ), originalHistory( w * h * 4, 0.375f ) {
@@ -66,12 +76,22 @@ struct fixture_t {
 	}
 };
 
+/*
+========================
+Energy
+========================
+*/
 static double Energy( const std::vector<float> &image ) {
 	double total = 0;
 	for ( size_t i = 0; i < image.size(); i++ ) if ( i % 4 != 3 ) total += image[i];
 	return total;
 }
 
+/*
+========================
+main
+========================
+*/
 int main() {
 	int devices = 0;
 	if ( cudaGetDeviceCount( &devices ) != cudaSuccess || !devices ) return 77;

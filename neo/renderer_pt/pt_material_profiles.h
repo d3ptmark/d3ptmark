@@ -5,15 +5,15 @@
 #include "renderer_pt/pt_material_editor.h"
 
 struct ptMaterialFacts_t {
-	const char *name;
-	const char *description;
-	surfTypes_t surface;
-	bool interaction, specular, translucent, excluded;
+	const char	*name;
+	const char	*description;
+	surfTypes_t	surface;
+	bool		interaction, specular, translucent, excluded;
 };
 
 struct ptMaterialProfile_t {
-	const char *label;
-	ptMaterialOverride_t value;
+	const char				*label;
+	ptMaterialOverride_t	value;
 	ptMaterialProfile_t() : label( NULL ) {}
 };
 

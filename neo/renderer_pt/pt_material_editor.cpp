@@ -30,6 +30,11 @@ static const char *PT_MATERIAL_OVERRIDE_FILE = "pt_materials.cfg";
 static idCVar r_ptPhysicalAutoMaterials( "r_ptPhysicalAutoMaterials", "1", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_BOOL,
 	"automatically calibrate legacy physical materials; explicit ptMaterial blocks and editor overrides take priority" );
 
+/*
+========================
+R_PT_MaterialProfile
+========================
+*/
 ptMaterialProfile_t R_PT_MaterialProfile( const idMaterial *material ) {
 	if ( !r_ptPhysicalAutoMaterials.GetBool() || material->GetPhysicalMaterial().enabled ) return ptMaterialProfile_t();
 	ptMaterialFacts_t facts = { material->GetName(), material->GetDescription(), material->GetSurfaceType(), false, false,
@@ -55,12 +60,22 @@ ptMaterialProfile_t R_PT_MaterialProfile( const idMaterial *material ) {
 	return profile;
 }
 
+/*
+========================
+PT_MaterialFailure
+========================
+*/
 static void PT_MaterialFailure( const idStr &message ) {
 	ptMaterialStatus = message;
 	ptMaterialStatusError = true;
 	common->Warning( "Physical material editor: %s", message.c_str() );
 }
 
+/*
+========================
+PT_MaterialEditable
+========================
+*/
 static bool PT_MaterialEditable() {
 	if ( RB_PT_IsCapturing() ) {
 		PT_MaterialFailure( "Material editing is locked during capture; use r_ptAbort first" );
@@ -69,6 +84,11 @@ static bool PT_MaterialEditable() {
 	return true;
 }
 
+/*
+========================
+PT_DefaultMaterial
+========================
+*/
 static ptMaterialOverride_t PT_DefaultMaterial( const idMaterial *material ) {
 	ptMaterialOverride_t value;
 	const physicalMaterialInfo_t &authored = material->GetPhysicalMaterial();
@@ -86,6 +106,11 @@ static ptMaterialOverride_t PT_DefaultMaterial( const idMaterial *material ) {
 	return value;
 }
 
+/*
+========================
+PT_SelectedMaterial
+========================
+*/
 static const idMaterial *PT_SelectedMaterial() {
 	if ( ptSelectedMaterial.IsEmpty() ) return NULL;
 	const idMaterial *material = declManager->FindMaterial( ptSelectedMaterial, false );
@@ -97,11 +122,21 @@ static const idMaterial *PT_SelectedMaterial() {
 	return material;
 }
 
+/*
+========================
+PT_CurrentMaterial
+========================
+*/
 static ptMaterialOverride_t PT_CurrentMaterial( const idMaterial *material ) {
 	const ptMaterialOverride_t *preview = ptMaterialOverrides.Preview( material->GetName() );
 	return preview ? *preview : PT_DefaultMaterial( material );
 }
 
+/*
+========================
+PT_PreviewMaterial
+========================
+*/
 static void PT_PreviewMaterial( const ptMaterialOverride_t &value ) {
 	if ( !ptMaterialOverrides.Set( ptSelectedMaterial, value ) ) {
 		PT_MaterialFailure( "Invalid material values; preview was not changed" );
@@ -111,6 +146,11 @@ static void PT_PreviewMaterial( const ptMaterialOverride_t &value ) {
 	ptMaterialStatusError = false;
 }
 
+/*
+========================
+PT_LoadMaterialOverrides
+========================
+*/
 static void PT_LoadMaterialOverrides() {
 	const idStr path = fileSystem->RelativePathToOSPath( PT_MATERIAL_OVERRIDE_FILE, "fs_configpath" );
 	errno = 0;
@@ -142,6 +182,11 @@ static void PT_LoadMaterialOverrides() {
 	}
 }
 
+/*
+========================
+PT_SaveSelectedMaterial
+========================
+*/
 static void PT_SaveSelectedMaterial() {
 	const idMaterial *material = PT_SelectedMaterial();
 	if ( !material || !PT_MaterialEditable() ) return;
@@ -184,6 +229,11 @@ static void PT_SaveSelectedMaterial() {
 	common->Printf( "Physical material editor: %s\n", ptMaterialStatus.c_str() );
 }
 
+/*
+========================
+PT_RequestMaterialPick
+========================
+*/
 static bool PT_RequestMaterialPick() {
 	if ( !PT_MaterialEditable() ) return false;
 	ptMaterialPickPending = true;
@@ -192,6 +242,11 @@ static bool PT_RequestMaterialPick() {
 	return true;
 }
 
+/*
+========================
+R_PT_UpdateMaterialPick
+========================
+*/
 void R_PT_UpdateMaterialPick( const viewDef_t *view ) {
 	if ( !ptMaterialPickPending || view->isSubview || !view->renderWorld ) return;
 	ptMaterialPickPending = false;
@@ -215,12 +270,22 @@ void R_PT_UpdateMaterialPick( const viewDef_t *view ) {
 	PT_MaterialFailure( "No drawable material at the view center; previous selection was kept" );
 }
 
+/*
+========================
+PT_MaterialPick_f
+========================
+*/
 static void PT_MaterialPick_f( const idCmdArgs &args ) {
 	if ( !PT_RequestMaterialPick() ) return;
 	using namespace D3::ImGuiHooks;
 	if ( IsImguiEnabled() ) R_PT_OpenUI( "physical" );
 }
 
+/*
+========================
+PT_Material_f
+========================
+*/
 static void PT_Material_f( const idCmdArgs &args ) {
 	if ( args.Argc() < 2 ) {
 		common->Printf( "r_ptMaterial select <name> | set <property> <value(s)> | reset | revert | save | status\n"
@@ -280,15 +345,31 @@ static void PT_Material_f( const idCmdArgs &args ) {
 	}
 }
 
+/*
+========================
+R_PT_InitMaterialEditor
+========================
+*/
 void R_PT_InitMaterialEditor() {
 	PT_LoadMaterialOverrides();
 	cmdSystem->AddCommand( "r_ptMaterialPick", PT_MaterialPick_f, CMD_FL_RENDERER, "pick the center material for physical tuning" );
 	cmdSystem->AddCommand( "r_ptMaterial", PT_Material_f, CMD_FL_RENDERER, "preview, reset, revert, save or inspect physical material overrides" );
 }
 
+/*
+========================
+R_PT_MaterialOverrideRevision
+========================
+*/
 unsigned int R_PT_MaterialOverrideRevision() {
 	return ptMaterialOverrides.Revision() * 2u + ( r_ptPhysicalAutoMaterials.GetBool() ? 1u : 0u );
 }
+
+/*
+========================
+R_PT_MaterialOverride
+========================
+*/
 const ptMaterialOverride_t *R_PT_MaterialOverride( const char *name ) { return ptMaterialOverrides.Preview( name ); }
 
 void R_PT_DrawMaterialEditor() {

@@ -7,8 +7,8 @@
 #include "renderer_pt/pt_types.h"
 
 struct ptMaterialOverride_t {
-	float metallic, roughness, transmission, ior, thin, thickness;
-	float absorption[3], tint[3];
+	float	metallic, roughness, transmission, ior, thin, thickness;
+	float	absorption[3], tint[3];
 
 	ptMaterialOverride_t() : metallic( 0 ), roughness( 0.7f ), transmission( 0 ), ior( 1.5f ), thin( 0 ), thickness( 0.005f ) {
 		for ( int c = 0; c < 3; c++ ) { absorption[c] = 0; tint[c] = 1; }
@@ -61,9 +61,9 @@ inline bool PT_ValidMaterialOverrideName( const char *name ) {
 class idPTMaterialOverrides {
 public:
 	struct entry_t {
-		idStr name;
-		ptMaterialOverride_t preview, saved;
-		bool previewEnabled, savedEnabled;
+		idStr					name;
+		ptMaterialOverride_t	preview, saved;
+		bool					previewEnabled, savedEnabled;
 		entry_t() : previewEnabled( false ), savedEnabled( false ) {}
 		bool Dirty() const {
 			return previewEnabled != savedEnabled || ( previewEnabled && !( preview == saved ) );
@@ -185,8 +185,8 @@ private:
 		entry.name = name;
 		return entries[entries.Append( entry )];
 	}
-	idList<entry_t> entries;
-	unsigned int revision;
+	idList<entry_t>	entries;
+	unsigned int	revision;
 };
 
 #ifdef PT_PHYSICAL

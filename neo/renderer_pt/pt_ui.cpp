@@ -20,6 +20,11 @@ static const char *ptUIUsage = "usage: r_ptUI [quality|settings"
 #endif
 	"]";
 
+/*
+========================
+PT_CollectUIVariable
+========================
+*/
 static void PT_CollectUIVariable( const char *name ) {
 	if ( idStr::Icmpn( name, "r_pt", 4 ) != 0 ) return;
 	idCVar *var = cvarSystem->Find( name );
@@ -30,6 +35,11 @@ static void PT_CollectUIVariable( const char *name ) {
 	ptUIVariables.Append( var );
 }
 
+/*
+========================
+PT_RefreshUIVariables
+========================
+*/
 static void PT_RefreshUIVariables() {
 	ptUIVariables.Clear();
 	cvarSystem->CommandCompletion( PT_CollectUIVariable );
@@ -38,6 +48,11 @@ static void PT_RefreshUIVariables() {
 	} );
 }
 
+/*
+========================
+PT_DrawPreset
+========================
+*/
 static void PT_DrawPreset( idCVar &var ) {
 	if ( ImGui::BeginCombo( "##value", var.GetString() ) ) {
 		for ( int i = 0; i < PT_QUALITY_PRESET_COUNT; i++ ) {
@@ -52,6 +67,11 @@ static void PT_DrawPreset( idCVar &var ) {
 	}
 }
 
+/*
+========================
+PT_DrawUIVariable
+========================
+*/
 static void PT_DrawUIVariable( idCVar &var ) {
 	ImGui::PushID( var.GetName() );
 	ImGui::TableNextRow();
@@ -104,6 +124,11 @@ static void PT_DrawUIVariable( idCVar &var ) {
 	ImGui::PopID();
 }
 
+/*
+========================
+PT_DrawQualityTab
+========================
+*/
 static void PT_DrawQualityTab( bool capturing ) {
 	ImGui::TextWrapped( "Presets change quality budgets only. Editing a budget selects the family's custom mode." );
 	ImGui::BeginDisabled( capturing );
@@ -120,6 +145,11 @@ static void PT_DrawQualityTab( bool capturing ) {
 	ImGui::EndDisabled();
 }
 
+/*
+========================
+PT_DrawSettingsTab
+========================
+*/
 static void PT_DrawSettingsTab( bool capturing ) {
 	static ImGuiTextFilter filter;
 	filter.Draw( "Search name or description" );
@@ -139,6 +169,11 @@ static void PT_DrawSettingsTab( bool capturing ) {
 	ImGui::EndDisabled();
 }
 
+/*
+========================
+R_PT_DrawUI
+========================
+*/
 void R_PT_DrawUI() {
 	using namespace D3::ImGuiHooks;
 	bool open = true;
@@ -170,6 +205,11 @@ void R_PT_DrawUI() {
 	if ( !open ) CloseWindow( D3_ImGuiWin_PathTracer );
 }
 
+/*
+========================
+R_PT_OpenUI
+========================
+*/
 void R_PT_OpenUI( const char *tab ) {
 	using namespace D3::ImGuiHooks;
 	const char *requested = NULL;
@@ -191,6 +231,11 @@ void R_PT_OpenUI( const char *tab ) {
 }
 #endif
 
+/*
+========================
+PT_UI_f
+========================
+*/
 static void PT_UI_f( const idCmdArgs &args ) {
 	using namespace D3::ImGuiHooks;
 	if ( !IsImguiEnabled() ) {
@@ -212,6 +257,11 @@ static void PT_UI_f( const idCmdArgs &args ) {
 #endif
 }
 
+/*
+========================
+R_PT_InitUI
+========================
+*/
 void R_PT_InitUI() {
 	cmdSystem->AddCommand( "r_ptUI", PT_UI_f, CMD_FL_RENDERER, "toggle path tracer controls, or open a quality/settings"
 #ifdef PT_PHYSICAL

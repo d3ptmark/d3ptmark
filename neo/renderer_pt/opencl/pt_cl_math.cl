@@ -23,42 +23,47 @@
 #define PT_INLINE		static inline
 
 typedef struct {
-	float origin[3];
-	float direction[3];
-	float tMin;
-	float tMax;
-	float worldTMin;			// non-weapon triangles closer than this are ignored
-	int flags;
+	float	origin[3];
+	float	direction[3];
+	float	tMin;
+	float	tMax;
+	float	worldTMin;	// non-weapon triangles closer than this are ignored
+	int		flags;
 } ptRay_t;
 
 typedef struct {
-	bool hit;
-	float t;
-	float position[3];
-	float normal[3];
-	float tangent[3];
-	float binormal[3];
-	float texcoord[2];
-	float barycentrics[3];		// (w, u, v)
-	int materialIndex;
-	int triangleIndex;
-	int triFlags;				// ptTriangle_t::flags of the hit triangle
+	bool	hit;
+	float	t;
+	float	position[3];
+	float	normal[3];
+	float	tangent[3];
+	float	binormal[3];
+	float	texcoord[2];
+	float	barycentrics[3];	// (w, u, v)
+	int		materialIndex;
+	int		triangleIndex;
+	int		triFlags;			// ptTriangle_t::flags of the hit triangle
 } ptHitInfo_t;
 
 // CUDA __device__ globals g_softShadowScale / g_rayOffset, staged per launch
 typedef struct {
-	float softShadowScale;
-	float rayOffset;
+	float	softShadowScale;
+	float	rayOffset;
 } ptClGlobals_t;
 
 // texture descriptor table + texel pool, replaces const cudaTexture_t *
 typedef struct {
-	__global const ptClTexture_t *desc;
-	__global const uchar4 *texels;
+	__global const ptClTexture_t	*desc;
+	__global const uchar4			*texels;
 } ptClTextures_t;
 
-PT_INLINE float PT_Clamp(float x, float a, float b) {
-	return fmax(a, fmin(b, x));
+/*
+========================
+PT_Clamp
+========================
+*/
+PT_INLINE float PT_Clamp( float x, float a, float b ) {
+	return fmax( a, fmin( b, x ) );
 }
 
 /*
@@ -72,36 +77,62 @@ nudges every SVGF reprojection off the pixel grid. tanpi is exact at the
 common angles and agrees with the correctly rounded value elsewhere.
 ========================
 */
-PT_INLINE float PT_TanHalfFov(float fovDegrees) {
-	return tanpi(fovDegrees / 360.0f);
+PT_INLINE float PT_TanHalfFov( float fovDegrees ) {
+	return tanpi( fovDegrees / 360.0f );
 }
 
-PT_INLINE float dot3(const float* a, const float* b) {
+/*
+========================
+dot3
+========================
+*/
+PT_INLINE float dot3( const float *a, const float *b ) {
 	return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
-// one __global operand (vertex / light / guide data)
-PT_INLINE float dot3g(const float* a, __global const float* b) {
+/*
+========================
+dot3g
+
+One __global operand (vertex / light / guide data)
+========================
+*/
+PT_INLINE float dot3g( const float *a, __global const float *b ) {
 	return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
-PT_INLINE void cross3(const float* a, const float* b, float* result) {
+/*
+========================
+cross3
+========================
+*/
+PT_INLINE void cross3( const float *a, const float *b, float *result ) {
 	result[0] = a[1] * b[2] - a[2] * b[1];
 	result[1] = a[2] * b[0] - a[0] * b[2];
 	result[2] = a[0] * b[1] - a[1] * b[0];
 }
 
-PT_INLINE void normalize3(float* v) {
-	float len = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-	if (len > 1e-6f) {
+/*
+========================
+normalize3
+========================
+*/
+PT_INLINE void normalize3( float *v ) {
+	float len = sqrt( v[0] * v[0] + v[1] * v[1] + v[2] * v[2] );
+	if ( len > 1e-6f ) {
 		v[0] /= len;
 		v[1] /= len;
 		v[2] /= len;
 	}
 }
 
-PT_INLINE float length3(const float* v) {
-	return sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+/*
+========================
+length3
+========================
+*/
+PT_INLINE float length3( const float *v ) {
+	return sqrt( v[0] * v[0] + v[1] * v[1] + v[2] * v[2] );
 }
 
 /*
@@ -110,31 +141,58 @@ PCG random numbers, bit identical to the CUDA backend
 ========================
 */
 typedef struct {
-	uint state;
+	uint	state;
 } ptRng_t;
 
-PT_INLINE uint PT_PcgPermute(uint state) {
-	uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-	return (word >> 22u) ^ word;
+/*
+========================
+PT_PcgPermute
+========================
+*/
+PT_INLINE uint PT_PcgPermute( uint state ) {
+	uint word = ( ( state >> ( ( state >> 28u ) + 4u ) ) ^ state ) * 277803737u;
+	return ( word >> 22u ) ^ word;
 }
 
-PT_INLINE uint PT_PcgHash(uint v) {
-	return PT_PcgPermute(v * 747796405u + 2891336453u);
+/*
+========================
+PT_PcgHash
+========================
+*/
+PT_INLINE uint PT_PcgHash( uint v ) {
+	return PT_PcgPermute( v * 747796405u + 2891336453u );
 }
 
-PT_INLINE void PT_RngInit(ptRng_t* rng, uint pixel, uint frame) {
-	rng->state = PT_PcgHash(pixel ^ PT_PcgHash(frame + 0x9E3779B9u));
+/*
+========================
+PT_RngInit
+========================
+*/
+PT_INLINE void PT_RngInit( ptRng_t *rng, uint pixel, uint frame ) {
+	rng->state = PT_PcgHash( pixel ^ PT_PcgHash( frame + 0x9E3779B9u ) );
 }
 
-// uniform float in [0, 1)
-PT_INLINE float PT_Rand(ptRng_t* rng) {
+/*
+========================
+PT_Rand
+
+Uniform float in [0, 1)
+========================
+*/
+PT_INLINE float PT_Rand( ptRng_t *rng ) {
 	rng->state = rng->state * 747796405u + 2891336453u;
-	return (float)(PT_PcgPermute(rng->state) >> 8) * (1.0f / 16777216.0f);
+	return (float)( PT_PcgPermute( rng->state ) >> 8 ) * ( 1.0f / 16777216.0f );
 }
 
-// stateless hash, used for per-triangle debug colors
-PT_INLINE uint cupt_hash(uint seed) {
-	return PT_PcgHash(seed);
+/*
+========================
+cupt_hash
+
+Stateless hash, used for per-triangle debug colors
+========================
+*/
+PT_INLINE uint cupt_hash( uint seed ) {
+	return PT_PcgHash( seed );
 }
 
 /*
@@ -144,6 +202,6 @@ PT_SrgbToLinear
 Plain 2.2 power curve, the exact inverse of the default r_ptGamma.
 ========================
 */
-PT_INLINE float PT_SrgbToLinear(float c) {
-	return c > 0.0f ? exp2(2.2f * log2(c)) : 0.0f;
+PT_INLINE float PT_SrgbToLinear( float c ) {
+	return c > 0.0f ? exp2( 2.2f * log2( c ) ) : 0.0f;
 }

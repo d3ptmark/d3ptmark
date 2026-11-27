@@ -34,6 +34,11 @@ static struct {
 	ptBenchmarkStatistics_t stats;
 } benchmark;
 
+/*
+========================
+R_BenchmarkActive
+========================
+*/
 bool R_BenchmarkActive() { return benchmark.active; }
 bool R_GL_BenchmarkActive() { return benchmark.active && benchmark.openGL; }
 #ifdef HAVE_PATHTRACER
@@ -89,6 +94,11 @@ void R_EndBenchmark( bool completed ) {
 #endif
 }
 
+/*
+========================
+R_BenchmarkNewFrame
+========================
+*/
 void R_BenchmarkNewFrame() {
 	benchmark.ready = benchmark.rendered = false;
 	benchmark.frameBatches = 0;
@@ -101,6 +111,11 @@ void R_BenchmarkNewFrame() {
 #endif
 }
 
+/*
+========================
+R_BenchmarkAdvance
+========================
+*/
 bool R_BenchmarkAdvance() {
 	if ( !PT_BenchmarkCanAdvance( benchmark.ready, Sys_MillisecondsPrecise() - benchmark.frameStart ) ) return false;
 	if ( !R_PT_ReportFrameEnd( benchmark.lastImage, benchmark.width, benchmark.height,
@@ -122,6 +137,12 @@ bool R_BenchmarkAdvance() {
 }
 
 #ifdef HAVE_PATHTRACER
+
+/*
+========================
+R_PT_BenchmarkRendered
+========================
+*/
 void R_PT_BenchmarkRendered( int accumulatedFrames, float gpuMilliseconds, int width, int height ) {
 	if ( !benchmark.active || benchmark.ready ) return;
 	if ( accumulatedFrames != benchmark.frameBatches + 1 ) {
@@ -137,13 +158,24 @@ void R_PT_BenchmarkRendered( int accumulatedFrames, float gpuMilliseconds, int w
 }
 #endif
 
-// Called around the in-sequence screen update, after EndFrame has presented.
+/*
+========================
+R_BenchmarkScreenBegin
+
+Called around the in-sequence screen update, after EndFrame has presented.
+========================
+*/
 void R_BenchmarkScreenBegin() {
 	R_PT_ReportTick();
 	benchmark.screenStart = Sys_MillisecondsPrecise();
 	benchmark.rendered = false;
 }
 
+/*
+========================
+R_BenchmarkCheckGLErrors
+========================
+*/
 static bool R_BenchmarkCheckGLErrors( const char *stage ) {
 	bool ok = true;
 	for ( int i = 0; i < 10; i++ ) {
@@ -156,6 +188,11 @@ static bool R_BenchmarkCheckGLErrors( const char *stage ) {
 	return ok;
 }
 
+/*
+========================
+R_BenchmarkCaptureGL
+========================
+*/
 void R_BenchmarkCaptureGL() {
 	if ( !R_GL_BenchmarkActive() || benchmark.ready ) return;
 	benchmark.width = glConfig.vidWidth;
@@ -199,6 +236,11 @@ void R_BenchmarkCaptureGL() {
 	benchmark.ready = true;
 }
 
+/*
+========================
+R_BenchmarkScreenComplete
+========================
+*/
 void R_BenchmarkScreenComplete() {
 	if ( benchmark.openGL ) return;
 	if ( !benchmark.active || benchmark.ready ) return;
@@ -228,6 +270,11 @@ void R_BenchmarkScreenComplete() {
 	}
 }
 
+/*
+========================
+PT_BenchmarkImageDirectory
+========================
+*/
 static bool PT_BenchmarkImageDirectory( const idStr &demo, int samples, bool openGL, idStr &directory ) {
 	idStr name;
 	demo.ExtractFileName( name );
@@ -247,6 +294,11 @@ static bool PT_BenchmarkImageDirectory( const idStr &demo, int samples, bool ope
 	return false;
 }
 
+/*
+========================
+R_StartBenchmark
+========================
+*/
 static void R_StartBenchmark( const idCmdArgs &args, bool openGL ) {
 	int samples = 0;
 	if ( openGL ? args.Argc() != 2 : ( args.Argc() != 3 || !PT_ParseBenchmarkSamples( args.Argv( 2 ), samples ) ) ) {
@@ -336,11 +388,22 @@ static void R_StartBenchmark( const idCmdArgs &args, bool openGL ) {
 #endif
 }
 
+/*
+========================
+R_GL_Benchmark_f
+========================
+*/
 void R_GL_Benchmark_f( const idCmdArgs &args ) {
 	R_StartBenchmark( args, true );
 }
 
 #ifdef HAVE_PATHTRACER
+
+/*
+========================
+R_PT_Benchmark_f
+========================
+*/
 void R_PT_Benchmark_f( const idCmdArgs &args ) {
 	R_StartBenchmark( args, false );
 }

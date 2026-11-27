@@ -14,6 +14,11 @@ idCommon *common = NULL; // idlib links against the engine global even for strin
 	} \
 } while ( 0 )
 
+/*
+========================
+main
+========================
+*/
 int main() {
 	const ptQualitySettings_t expected[] = {
 		{ 0.35f, 1, 2, 1 },

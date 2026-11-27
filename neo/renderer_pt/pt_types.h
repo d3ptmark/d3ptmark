@@ -86,24 +86,24 @@ enum ptPhysicalMaterialSource_t {
 #endif
 
 typedef struct {
-	float position[3];
-	float normal[3];
-	float texcoord[2];
-	float tangent[3];
-	float binormal[3];
-	float color[4];				// vertex color RGBA
+	float	position[3];
+	float	normal[3];
+	float	texcoord[2];
+	float	tangent[3];
+	float	binormal[3];
+	float	color[4];	// vertex color RGBA
 } ptVertex_t;
 
 typedef struct {
-	int vertexIndices[3];
-	float bounds[6];			// min xyz, max xyz
-	int materialIndex;
-	int flags;					// ptTriangleFlags_t
+	int		vertexIndices[3];
+	float	bounds[6];	// min xyz, max xyz
+	int		materialIndex;
+	int		flags;		// ptTriangleFlags_t
 } ptTriangle_t;
 
 typedef struct {
-	int width;
-	int height;					// 0x0 means "not resident", samplers return white
+	int	width;
+	int	height;	// 0x0 means "not resident", samplers return white
 } ptTextureInfo_t;
 
 /*
@@ -112,79 +112,79 @@ back from GL; albedo, emission and light textures are sRGB encoded and decoded
 by the samplers, normal and specular maps are used as is.
 */
 typedef struct {
-	float albedo[4];			// base color + alpha
-	float emission[3];			// emissive color (glowing materials), modulated by emissionTexture
-	float metallic;
-	float roughness;
-	float ior;					// index of refraction
-	float transmission;			// glass etc.
-	float alphaTest;			// 0 = no test, >0 = threshold
-	int blendMode;				// ptBlendMode_t
-	int useVertexColor;
-	int isAmbientOnly;			// no interaction stages, rendered as unlit overlay
-	int noShadows;				// does not cast shadows
-	int decalOverlay;			// authored lit overlay, not inferred from noShadows alone
-	int additiveUsesAlpha;		// ptAdditiveAlpha_t
-	int additiveMaskTexture;
-	int additiveMaskVertexColor;
-	float additiveMaskAlpha;
-	float additiveMaskTransform[6];
-	int albedoTexture;			// texture index or -1
-	int normalTexture;
-	int specularTexture;
-	int emissionTexture;		// glow stage texture or -1
-	int emissionVertexColor;
-	int emissionUsesAlpha;		// SRC_ALPHA, ONE glow stages
-	float emissionAlpha;
-	float emissionTransform[6];
-	float bumpScale;
-	float texTransform[6];		// affine transform: u'=x0*u+x1*v+x2, v'=x3*u+x4*v+x5
-	float polygonOffset;		// depth bias for decals
+	float	albedo[4];			// base color + alpha
+	float	emission[3];		// emissive color (glowing materials), modulated by emissionTexture
+	float	metallic;
+	float	roughness;
+	float	ior;				// index of refraction
+	float	transmission;		// glass etc.
+	float	alphaTest;			// 0 = no test, >0 = threshold
+	int		blendMode;			// ptBlendMode_t
+	int		useVertexColor;
+	int		isAmbientOnly;		// no interaction stages, rendered as unlit overlay
+	int		noShadows;			// does not cast shadows
+	int		decalOverlay;		// authored lit overlay, not inferred from noShadows alone
+	int		additiveUsesAlpha;	// ptAdditiveAlpha_t
+	int		additiveMaskTexture;
+	int		additiveMaskVertexColor;
+	float	additiveMaskAlpha;
+	float	additiveMaskTransform[6];
+	int		albedoTexture;		// texture index or -1
+	int		normalTexture;
+	int		specularTexture;
+	int		emissionTexture;	// glow stage texture or -1
+	int		emissionVertexColor;
+	int		emissionUsesAlpha;	// SRC_ALPHA, ONE glow stages
+	float	emissionAlpha;
+	float	emissionTransform[6];
+	float	bumpScale;
+	float	texTransform[6];	// affine transform: u'=x0*u+x1*v+x2, v'=x3*u+x4*v+x5
+	float	polygonOffset;		// depth bias for decals
 #ifdef PT_PHYSICAL
-	int physicalMaterial;		// ptPhysicalMaterialSource_t; never inferred from alpha alone
-	int emissiveOverlay;		// unlit FX radiance uses physical emission calibration
-	int thinTransmission;		// 0 solid dielectric, 1 thin glass, 2 diffuse sheet
-	float absorption[3];		// Beer-Lambert absorption coefficients in inverse meters
-	float thickness;			// thin sheet thickness in meters
+	int		physicalMaterial;	// ptPhysicalMaterialSource_t; never inferred from alpha alone
+	int		emissiveOverlay;	// unlit FX radiance uses physical emission calibration
+	int		thinTransmission;	// 0 solid dielectric, 1 thin glass, 2 diffuse sheet
+	float	absorption[3];		// Beer-Lambert absorption coefficients in inverse meters
+	float	thickness;			// thin sheet thickness in meters
 #endif
 } ptMaterial_t;
 
 typedef struct {
-	int type;					// ptLightType_t
-	float position[3];
-	float direction[3];			// normalized forward (spot / directional)
-	float color[3];
-	float intensity;
-	float radius;				// falloff boundary
-	float area[3];				// emissive triangle area
-	float areaBoundRadius;		// conservative radius around the triangle centroid
-	int areaTriangleIndex;		// emissive triangle index for PT_LIGHT_AREA
-	int textureIndex;			// light texture or -1
-	float volumetric;			// volumetric scattering intensity (0 = off)
-	float coneAngle;			// spot half angle in radians (0 = omni)
-	float coneFalloff;			// spot edge exponent
+	int		type;				// ptLightType_t
+	float	position[3];
+	float	direction[3];		// normalized forward (spot / directional)
+	float	color[3];
+	float	intensity;
+	float	radius;				// falloff boundary
+	float	area[3];			// emissive triangle area
+	float	areaBoundRadius;	// conservative radius around the triangle centroid
+	int		areaTriangleIndex;	// emissive triangle index for PT_LIGHT_AREA
+	int		textureIndex;		// light texture or -1
+	float	volumetric;			// volumetric scattering intensity (0 = off)
+	float	coneAngle;			// spot half angle in radians (0 = omni)
+	float	coneFalloff;		// spot edge exponent
 
-	float lightProject[4][4];	// Doom 3 light projection planes (world space)
-	float projectedTextureTransform[6]; // affine transform applied after the volume test
-	int projectedTextureAddress;	// ptLightTextureAddress_t
-	int projectedTextureIndex;	// light image, sampled at the projected (s, t)
-	int falloffTextureIndex;	// falloff image, sampled at (falloff, 0.5)
-	int boxFalloff;				// attenuate by lightProject / light image / falloff image
+	float	lightProject[4][4];				// Doom 3 light projection planes (world space)
+	float	projectedTextureTransform[6];	// affine transform applied after the volume test
+	int		projectedTextureAddress;		// ptLightTextureAddress_t
+	int		projectedTextureIndex;			// light image, sampled at the projected (s, t)
+	int		falloffTextureIndex;			// falloff image, sampled at (falloff, 0.5)
+	int		boxFalloff;						// attenuate by lightProject / light image / falloff image
 								// like the GL renderer instead of the spherical window
 
-	float lightRadius3[3];		// xyz extents for area sampling
+	float	lightRadius3[3];	// xyz extents for area sampling
 
-	float right[3];				// projected light axes (normalized)
-	float up[3];
+	float	right[3];	// projected light axes (normalized)
+	float	up[3];
 } ptLight_t;
 
 typedef struct {
-	float bounds[6];			// min xyz, max xyz
-	int leftChild;				// -1 for leaves
-	int rightChild;
-	int firstPrimitive;			// leaves only
-	int primitiveCount;
-	int escapeIndex;			// next node after this subtree, for stackless traversal
+	float	bounds[6];		// min xyz, max xyz
+	int		leftChild;		// -1 for leaves
+	int		rightChild;
+	int		firstPrimitive;	// leaves only
+	int		primitiveCount;
+	int		escapeIndex;	// next node after this subtree, for stackless traversal
 } ptBVHNode_t;
 
 /*
@@ -197,81 +197,81 @@ it must stay small (well under the 4 KB kernel parameter limit) and POD.
 */
 typedef struct {
 	// camera
-	float camPos[3];
-	float camForward[3];
-	float camRight[3];
-	float camUp[3];
-	float fovX;
-	float fovY;
+	float	camPos[3];
+	float	camForward[3];
+	float	camRight[3];
+	float	camUp[3];
+	float	fovX;
+	float	fovY;
 #ifdef PT_PHYSICAL
-	float physicalMetersPerUnit;
-	float physicalLightLumens;
-	float physicalSunLux;
-	float physicalIor;
-	float physicalRoughnessScale;
-	float physicalApertureRadius;	// world units; zero selects a pinhole
-	float physicalFocusDistance;	// world units, along camForward
-	float physicalFogDensity;	// extinction coefficient in inverse meters
-	float physicalFogAlbedo;
-	float physicalFogAnisotropy;
-	float physicalFogRadius;		// camera-centered homogeneous sphere, world units
-	int physicalFogSteps;
+	float	physicalMetersPerUnit;
+	float	physicalLightLumens;
+	float	physicalSunLux;
+	float	physicalIor;
+	float	physicalRoughnessScale;
+	float	physicalApertureRadius;	// world units; zero selects a pinhole
+	float	physicalFocusDistance;	// world units, along camForward
+	float	physicalFogDensity;		// extinction coefficient in inverse meters
+	float	physicalFogAlbedo;
+	float	physicalFogAnisotropy;
+	float	physicalFogRadius;		// camera-centered homogeneous sphere, world units
+	int		physicalFogSteps;
 #endif
 
 	// trace resolution, must be <= the size passed to idPathTracerBackend::Resize
-	int width;
-	int height;
+	int	width;
+	int	height;
 
-	int renderMode;				// ptRenderMode_t
-	int frameIndex;				// filled in by the backend (accumulated frame count)
-	unsigned int sampleIndex;	// independent RNG sequence, does not restart when the camera moves
+	int				renderMode;		// ptRenderMode_t
+	int				frameIndex;		// filled in by the backend (accumulated frame count)
+	unsigned int	sampleIndex;	// independent RNG sequence, does not restart when the camera moves
 
 	// sampling
-	int samplesPerPixel;
-	int maxDepth;
-	int maxLightSamples;
-	float indirectProb;
+	int		samplesPerPixel;
+	int		maxDepth;
+	int		maxLightSamples;
+	float	indirectProb;
 
 	// path termination
-	int rrEnabled;
-	int rrMinBounces;
-	float rrSurvivalMin;
-	float earlyTermThreshold;	// Russian roulette below this throughput (unbiased)
-	float throughputClamp;		// Russian roulette below this throughput after shading (unbiased)
-	float fireflyClamp;
+	int		rrEnabled;
+	int		rrMinBounces;
+	float	rrSurvivalMin;
+	float	earlyTermThreshold;	// Russian roulette below this throughput (unbiased)
+	float	throughputClamp;	// Russian roulette below this throughput after shading (unbiased)
+	float	fireflyClamp;
 
 	// shading
-	float rayOffset;
-	float emissionBoost;
-	float specularBoost;
-	float softShadowScale;
+	float	rayOffset;
+	float	emissionBoost;
+	float	specularBoost;
+	float	softShadowScale;
 
 	// sky
-	float skyIntensity;
-	float skyZenith[3];
-	float skyHorizon[3];
-	float skyGround[3];
+	float	skyIntensity;
+	float	skyZenith[3];
+	float	skyHorizon[3];
+	float	skyGround[3];
 
 	// volumetrics
-	float volDensity;
-	int volSteps;
-	float volAnisotropy;
-	float volFalloff;
-	float volMaxDist;
+	float	volDensity;
+	int		volSteps;
+	float	volAnisotropy;
+	float	volFalloff;
+	float	volMaxDist;
 
 	// display
-	int denoiseEnabled;
-	int captureTargetFrames;	// > 0: offline progressive capture, no temporal history cap
-	float denoiseStrength;	// variance-guided luminance sigma scale
-	int denoiseDebug;		// 0 beauty, 1 coverage, 2 history, 3 variance, 4 rejection, 5 diffuse, 6 specular
-	int denoiseDebugSignal;	// 0 diffuse, 1 specular
-	float exposure;
-	float gamma;
-	int toneMapMode;			// ptToneMap_t
-	float bloomStrength;
-	float bloomThreshold;		// exposed linear highlight threshold
-	float bloomRadius;			// fraction of image height
-	float lensFlareStrength;
+	int		denoiseEnabled;
+	int		captureTargetFrames;	// > 0: offline progressive capture, no temporal history cap
+	float	denoiseStrength;		// variance-guided luminance sigma scale
+	int		denoiseDebug;			// 0 beauty, 1 coverage, 2 history, 3 variance, 4 rejection, 5 diffuse, 6 specular
+	int		denoiseDebugSignal;		// 0 diffuse, 1 specular
+	float	exposure;
+	float	gamma;
+	int		toneMapMode;			// ptToneMap_t
+	float	bloomStrength;
+	float	bloomThreshold;			// exposed linear highlight threshold
+	float	bloomRadius;			// fraction of image height
+	float	lensFlareStrength;
 } ptRenderParams_t;
 
 #endif /* !__PT_TYPES_H__ */

@@ -18,6 +18,11 @@ idCommon *common = NULL;
 	} \
 } while ( 0 )
 
+/*
+========================
+Load
+========================
+*/
 static bool Load( idPTMaterialOverrides &store, const char *text ) {
 	idStr error;
 	const bool success = store.Load( text, idStr::Length( text ), error );
@@ -25,6 +30,11 @@ static bool Load( idPTMaterialOverrides &store, const char *text ) {
 	return success;
 }
 
+/*
+========================
+CheckProfiles
+========================
+*/
 static void CheckProfiles() {
 	ptMaterialFacts_t facts = { "textures/base_trim/a_reactorpipe_04_fin.tga", "clean copper", SURFTYPE_NONE, true, true, false, false };
 	ptMaterialProfile_t profile = PT_ChooseMaterialProfile( facts );
@@ -115,6 +125,11 @@ static void CheckProfiles() {
 	CHECK( PT_ChooseMaterialProfile( facts ).value.metallic == 0 );
 }
 
+/*
+========================
+main
+========================
+*/
 int main() {
 	CheckProfiles();
 	ptMaterialOverride_t metal;

@@ -7,18 +7,18 @@
 	GPU and CPU sensor sampling for capture reports (telemetry.csv).
 
 	GPU providers, tried in order:
-		nvml	NVIDIA on Windows and Linux, runtime-loaded NVML (no nvml.h needed)
-		sysfs	Linux amdgpu, i915 and xe through /sys (hwmon, DRM, PCI attributes),
-				with utilization and memory from this process's DRM fdinfo where
-				the driver has no device-wide attribute (i915, xe)
-		d3dkmt	Windows, any WDDM 2.4+ GPU: D3DKMT adapter/node perf data plus the
-				"GPU Engine" / "GPU Adapter Memory" performance counters (PDH)
+	nvml	NVIDIA on Windows and Linux, runtime-loaded NVML (no nvml.h needed)
+	sysfs	Linux amdgpu, i915 and xe through /sys (hwmon, DRM, PCI attributes),
+	with utilization and memory from this process's DRM fdinfo where
+	the driver has no device-wide attribute (i915, xe)
+	d3dkmt	Windows, any WDDM 2.4+ GPU: D3DKMT adapter/node perf data plus the
+	"GPU Engine" / "GPU Adapter Memory" performance counters (PDH)
 
 	CPU provider (sampled alongside the GPU one):
-		linux	/proc/stat, hwmon (k10temp, zenpower, coretemp) or thermal zones,
-				powercap RAPL package energy (AMD and Intel)
-		windows	GetSystemTimes, "Thermal Zone Information" and "Energy Meter"
-				(RAPL package) performance counters
+	linux	/proc/stat, hwmon (k10temp, zenpower, coretemp) or thermal zones,
+	powercap RAPL package energy (AMD and Intel)
+	windows	GetSystemTimes, "Thermal Zone Information" and "Energy Meter"
+	(RAPL package) performance counters
 
 	The device is matched by PCI address when the backend provides one, then by
 	name, then by being the only GPU of its PCI vendor. Sensors a provider does
@@ -56,17 +56,17 @@ extern const char *const ptGpuSensorNames[PT_GPU_SENSOR_COUNT];	// sensor_errors
 extern const char *const ptGpuSensorColumns[PT_GPU_SENSOR_COUNT];	// telemetry.csv column names
 
 struct ptGpuTelemetryTarget_t {
-	idStr			name;			// device name, e.g. CL_DEVICE_NAME or GL_RENDERER
-	idStr			pciBusId;		// "domain:bus:device.function" (hex), empty if unknown
-	unsigned int	vendorId;		// PCI vendor id, 0 if unknown
+	idStr			name;		// device name, e.g. CL_DEVICE_NAME or GL_RENDERER
+	idStr			pciBusId;	// "domain:bus:device.function" (hex), empty if unknown
+	unsigned int	vendorId;	// PCI vendor id, 0 if unknown
 
 	ptGpuTelemetryTarget_t() : vendorId( 0 ) {}
 };
 
 struct ptGpuTelemetrySample_t {
-	bool			valid[PT_GPU_SENSOR_COUNT];
-	double			value[PT_GPU_SENSOR_COUNT];
-	idStr			errors;			// "sensor:reason;sensor:reason"
+	bool	valid[PT_GPU_SENSOR_COUNT];
+	double	value[PT_GPU_SENSOR_COUNT];
+	idStr	errors;	// "sensor:reason;sensor:reason"
 
 	void			Clear();
 	void			Set( ptGpuSensor_t sensor, double v ) { valid[sensor] = true; value[sensor] = v; }
@@ -87,7 +87,7 @@ public:
 
 protected:
 	void					NotOffered( ptGpuSensor_t sensor, const char *reason );
-	idStr					unavailable;
+	idStr	unavailable;
 };
 
 // tries every provider compiled for this platform; on failure returns NULL and

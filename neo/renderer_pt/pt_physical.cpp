@@ -58,11 +58,21 @@ static idCVar r_ptPhysicalFogRadius( "r_ptPhysicalFogRadius", "30", CVAR_RENDERE
 static idCVar r_ptPhysicalFogSteps( "r_ptPhysicalFogSteps", "16", CVAR_RENDERER | CVAR_ARCHIVE | CVAR_INTEGER,
 	"stratified physical single-scattering integration steps per segment", 1, 128 );
 
+/*
+========================
+R_PT_InitPhysical
+========================
+*/
 void R_PT_InitPhysical() {
 	R_PT_InitMaterialEditor();
 	common->Printf( "PT_PHYSICAL: experimental photometric lighting and thin-lens camera enabled; r_ptUI physical opens controls\n" );
 }
 
+/*
+========================
+R_PT_PhysicalCamera
+========================
+*/
 void R_PT_PhysicalCamera( viewDef_t *view ) {
 	R_PT_UpdateMaterialPick( view );
 	if ( view->isSubview || !r_ptDraw.GetBool() || r_ptMode.GetInteger() != PT_MODE_PATHTRACE ) return;
@@ -75,6 +85,11 @@ void R_PT_PhysicalCamera( viewDef_t *view ) {
 	view->renderView.fov_y = PT_PhysicalFov( sensorWidth * height / width, focalLength );
 }
 
+/*
+========================
+R_PT_PhysicalParams
+========================
+*/
 void R_PT_PhysicalParams( ptRenderParams_t &p ) {
 	if ( p.renderMode != PT_MODE_PATHTRACE ) return;
 	p.physicalMetersPerUnit = r_ptPhysicalMetersPerUnit.GetFloat();
@@ -100,6 +115,11 @@ void R_PT_PhysicalParams( ptRenderParams_t &p ) {
 	p.physicalFogSteps = r_ptPhysicalFogSteps.GetInteger();
 }
 
+/*
+========================
+PT_PhysicalSlider
+========================
+*/
 static void PT_PhysicalSlider( const char *label, idCVar &var, float minimum, float maximum, const char *format, bool logarithmic = false ) {
 	float value = var.GetFloat();
 	if ( ImGui::SliderFloat( label, &value, minimum, maximum, format,
@@ -108,6 +128,11 @@ static void PT_PhysicalSlider( const char *label, idCVar &var, float minimum, fl
 	}
 }
 
+/*
+========================
+R_PT_DrawPhysicalControls
+========================
+*/
 void R_PT_DrawPhysicalControls() {
 	ImGui::PushItemWidth( ImGui::GetContentRegionAvail().x * 0.5f );
 	ImGui::TextWrapped( "PT_PHYSICAL is a build-time model. Global controls are archived CVars; material previews require explicit Save." );

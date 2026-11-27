@@ -15,12 +15,17 @@
 } while ( 0 )
 
 struct cachedValue_t {
-	const void *material;
-	unsigned int nameHash;
-	unsigned int regHash;
-	bool animated;
+	const void		*material;
+	unsigned int	nameHash;
+	unsigned int	regHash;
+	bool			animated;
 };
 
+/*
+========================
+Acquire
+========================
+*/
 static int Acquire( idPathTracerMaterialCache &cache, std::vector<cachedValue_t> &values,
 					const void *material, unsigned int nameHash, bool animated,
 					unsigned int regHash, int frame, bool &rebuild ) {
@@ -41,6 +46,11 @@ static int Acquire( idPathTracerMaterialCache &cache, std::vector<cachedValue_t>
 	return index;
 }
 
+/*
+========================
+main
+========================
+*/
 int main() {
 	idPathTracerMaterialCache cache;
 	std::vector<cachedValue_t> values( 1 );

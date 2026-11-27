@@ -29,12 +29,12 @@ inline bool PT_BenchmarkCanAdvance( bool imageSaved, double frameMilliseconds ) 
 }
 
 struct ptBenchmarkStatistics_t {
-	idList<double> frameMilliseconds;
-	double gpuMilliseconds = 0;
-	double renderMilliseconds = 0;
-	int dispatches = 0;
-	int imagesWritten = 0;
-	double imageMilliseconds = 0;
+	idList<double>	frameMilliseconds;
+	double			gpuMilliseconds = 0;
+	double			renderMilliseconds = 0;
+	int				dispatches = 0;
+	int				imagesWritten = 0;
+	double			imageMilliseconds = 0;
 
 	void AddImage( double milliseconds ) {
 		imagesWritten++;

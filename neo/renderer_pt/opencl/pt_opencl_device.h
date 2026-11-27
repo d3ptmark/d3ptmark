@@ -65,12 +65,12 @@ enum ptClKernel_t {
 };
 
 struct ptClProgram_t {
-	cl_context				context;
-	cl_device_id			device;
-	cl_program				program;
-	cl_kernel				kernels[PT_CL_KERNEL_COUNT];
-	size_t					maxWorkGroup[PT_CL_KERNEL_COUNT];
-	size_t					sortWorkGroup;		// PT_CL_SORT_WG the program was built with
+	cl_context		context;
+	cl_device_id	device;
+	cl_program		program;
+	cl_kernel		kernels[PT_CL_KERNEL_COUNT];
+	size_t			maxWorkGroup[PT_CL_KERNEL_COUNT];
+	size_t			sortWorkGroup;	// PT_CL_SORT_WG the program was built with
 	idList<cl_event> *		events;				// when set, every enqueued command appends its event
 };
 
@@ -80,23 +80,23 @@ struct ptClSceneView_t {
 	cl_mem	bvhNodes;
 	cl_mem	triIndices;
 	cl_mem	materials;
-	cl_mem	textureDesc;		// ptClTexture_t[PT_MAX_TEXTURES]
-	cl_mem	texels;				// RGBA8 pool, may be NULL when no texture is resident
+	cl_mem	textureDesc;	// ptClTexture_t[PT_MAX_TEXTURES]
+	cl_mem	texels;			// RGBA8 pool, may be NULL when no texture is resident
 	cl_mem	lights;
 	int		numLights;
 };
 
 struct ptClDenoiseSignal_t {
 	cl_mem	radiance;
-	cl_mem	history[2];			// realtime: illumination + variance; capture: raw mean RGB + E[luminance^2]
-	cl_mem	moments[2];			// float4: luminance, squared luminance, history length, rejection reason
+	cl_mem	history[2];	// realtime: illumination + variance; capture: raw mean RGB + E[luminance^2]
+	cl_mem	moments[2];	// float4: luminance, squared luminance, history length, rejection reason
 };
 
 struct ptClDenoiseBuffers_t {
-	cl_mem				radiance;			// full fresh HDR, including emission and volume
-	ptClDenoiseSignal_t	signals[3];			// diffuse, specular, volume
+	cl_mem				radiance;	// full fresh HDR, including emission and volume
+	ptClDenoiseSignal_t	signals[3];	// diffuse, specular, volume
 	cl_mem				guides[2];
-	cl_mem				scratch;			// float4 illumination + variance
+	cl_mem				scratch;	// float4 illumination + variance
 	cl_mem				filteredDiffuse;
 	cl_mem				filteredSpecular;
 };

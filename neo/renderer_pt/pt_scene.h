@@ -35,9 +35,9 @@ static ID_INLINE float PT_SrgbToLinear( float c ) {
 }
 
 typedef struct {
-	int				index;			// slot in idPathTracerScene::Textures()
-	int				width;
-	int				height;
+	int	index;	// slot in idPathTracerScene::Textures()
+	int	width;
+	int	height;
 	unsigned char *	rgba;			// width * height * 4 bytes, owned by the scene
 } ptTextureUpload_t;
 
@@ -123,8 +123,8 @@ private:
 	idList<ptVertex_t>		vertices;
 	idList<ptTriangle_t>	triangles;
 	idList<ptLight_t>		lights;
-	idList<ptLight_t>		areaLights;			// emissive triangles, appended after real lights in EndFrame
-	idList<int>				areaLightTris;		// triangle of each areaLights entry
+	idList<ptLight_t>		areaLights;		// emissive triangles, appended after real lights in EndFrame
+	idList<int>				areaLightTris;	// triangle of each areaLights entry
 	int						areaLightOverflow;
 	bool					warnedAreaLightBudget;
 	float					bounds[6];
@@ -133,18 +133,18 @@ private:
 	int						frameCount;
 
 	// cached across views
-	idList<ptMaterial_t>	materials;
-	idList<idVec3>			materialEmission;
-	idPathTracerMaterialCache materialCache;
+	idList<ptMaterial_t>		materials;
+	idList<idVec3>				materialEmission;
+	idPathTracerMaterialCache	materialCache;
 
-	idList<ptTextureInfo_t>	textures;
-	idList<const idImage *>	texturePtrs;
+	idList<ptTextureInfo_t>		textures;
+	idList<const idImage *>		texturePtrs;
 	idList<unsigned int>		textureNameHashes;
-	idList<int>				textureGLNames;
-	idHashIndex				textureHash;
-	idList<ptTextureUpload_t> pendingTextures;
-	int						textureGeneration;
-	bool					needTextureFlush;
+	idList<int>					textureGLNames;
+	idHashIndex					textureHash;
+	idList<ptTextureUpload_t>	pendingTextures;
+	int							textureGeneration;
+	bool						needTextureFlush;
 };
 
 #endif /* !__PT_SCENE_H__ */

@@ -3,10 +3,20 @@
 
 #include "renderer_pt/cuda/pt_cuda_device.h"
 
+/*
+========================
+PT_PostFinite
+========================
+*/
 __device__ inline float PT_PostFinite( float value ) {
 	return isfinite( value ) ? fminf( fmaxf( value, 0.0f ), 1.0e12f ) : 0.0f;
 }
 
+/*
+========================
+PT_PostSample
+========================
+*/
 __device__ inline float4 PT_PostSample( const float4 *image, int width, int height, float x, float y ) {
 	x = fminf( fmaxf( x, 0.0f ), (float)( width - 1 ) );
 	y = fminf( fmaxf( y, 0.0f ), (float)( height - 1 ) );
@@ -21,6 +31,11 @@ __device__ inline float4 PT_PostSample( const float4 *image, int width, int heig
 		( a.z * ( 1 - tx ) + b.z * tx ) * ( 1 - ty ) + ( c.z * ( 1 - tx ) + d.z * tx ) * ty, 0 );
 }
 
+/*
+========================
+PT_PostHighlights
+========================
+*/
 static __global__ void PT_PostHighlights( const float4 *hdr, float4 *highlights, int width, int height,
 										int smallWidth, int smallHeight, int scale, float sceneThreshold ) {
 	const int x = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -41,6 +56,11 @@ static __global__ void PT_PostHighlights( const float4 *hdr, float4 *highlights,
 	highlights[y * smallWidth + x] = make_float4( sum.x * inverse, sum.y * inverse, sum.z * inverse, 0 );
 }
 
+/*
+========================
+PT_PostBlur
+========================
+*/
 static __global__ void PT_PostBlur( const float4 *input, float4 *output, int width, int height, float sigma, int horizontal ) {
 	const int x = blockIdx.x * blockDim.x + threadIdx.x, y = blockIdx.y * blockDim.y + threadIdx.y;
 	if ( x >= width || y >= height ) return;
@@ -58,6 +78,11 @@ static __global__ void PT_PostBlur( const float4 *input, float4 *output, int wid
 	output[y * width + x] = make_float4( sum.x / total, sum.y / total, sum.z / total, 0 );
 }
 
+/*
+========================
+PT_PostComposite
+========================
+*/
 static __global__ void PT_PostComposite( const float4 *hdr, const float4 *blurred, float4 *output,
 									   int width, int height, int smallWidth, int smallHeight, int scale,
 									   float bloomStrength, float flareStrength ) {
@@ -88,7 +113,13 @@ static __global__ void PT_PostComposite( const float4 *hdr, const float4 *blurre
 	output[y * width + x] = make_float4( r, g, b, isfinite( base.w ) ? base.w : 0.0f );
 }
 
-// Also used directly by the isolated CUDA regression test.
+/*
+========================
+PT_Postprocess
+
+Also used directly by the isolated CUDA regression test.
+========================
+*/
 static inline cudaError_t PT_Postprocess( const ptCudaPostprocessBuffers_t &buffers, const float *hdr,
 	int width, int height, float exposure, float threshold, float radius, float bloom, float flare, cudaStream_t stream ) {
 	if ( width < 1 || height < 1 || !hdr || !buffers.output ) return cudaErrorInvalidValue;

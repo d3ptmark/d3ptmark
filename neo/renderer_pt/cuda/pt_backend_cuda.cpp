@@ -65,33 +65,33 @@ private:
 	bool					ResizePostprocess( int width, int height, float radius );
 	void					FreePostprocess();
 
-	bool					initialized;
-	bool					healthy;
-	cudaStream_t			stream;
-	cudaEvent_t				timerStart;
-	cudaEvent_t				timerStop;
-	cudaEvent_t				timerPath, timerDenoise, timerPostprocess;
+	bool			initialized;
+	bool			healthy;
+	cudaStream_t	stream;
+	cudaEvent_t		timerStart;
+	cudaEvent_t		timerStop;
+	cudaEvent_t		timerPath, timerDenoise, timerPostprocess;
 
 	// output
-	int						maxWidth;
-	int						maxHeight;
+	int	maxWidth;
+	int	maxHeight;
 	float *					d_accum;			// float4 HDR accumulation, row pitch == trace width
 	float *					d_filtered;			// float4 denoised HDR, never fed back into accumulation
 	unsigned char *			d_output;			// RGBA8
-	int						lastWidth;
-	int						lastHeight;
-	int						accumFrames;
-	float					traceMs;
-	float					pathMs, denoiseMs, postprocessMs, toneMapMs;
-	ptCudaDenoiseBuffers_t	denoiser;
-	ptCudaPostprocessBuffers_t postprocess;
-	int						postWidth, postHeight, postScale;
-	int						denoiseWidth;
-	int						denoiseHeight;
-	int						denoiseFrameSlot;
-	bool					denoiseHistoryValid;
-	ptRenderParams_t		previousDenoiseParams;
-	unsigned int			sampleSequence;
+	int							lastWidth;
+	int							lastHeight;
+	int							accumFrames;
+	float						traceMs;
+	float						pathMs, denoiseMs, postprocessMs, toneMapMs;
+	ptCudaDenoiseBuffers_t		denoiser;
+	ptCudaPostprocessBuffers_t	postprocess;
+	int							postWidth, postHeight, postScale;
+	int							denoiseWidth;
+	int							denoiseHeight;
+	int							denoiseFrameSlot;
+	bool						denoiseHistoryValid;
+	ptRenderParams_t			previousDenoiseParams;
+	unsigned int				sampleSequence;
 
 	// scene, all grown on demand
 	ptVertex_t *			d_vertices;		int capVertices;
@@ -107,18 +107,18 @@ private:
 	ptMaterial_t *			d_materials;	int capMaterials;
 	ptLight_t *				d_lights;		int capLights;
 
-	int						numVertices;
-	int						numTriangles;
-	int						numBVHNodes;
-	int						numMaterials;
-	int						numLights;
+	int	numVertices;
+	int	numTriangles;
+	int	numBVHNodes;
+	int	numMaterials;
+	int	numLights;
 
 	// textures: host mirror of the device descriptor table
-	cudaTexture_t			h_texDesc[PT_MAX_TEXTURES];
+	cudaTexture_t	h_texDesc[PT_MAX_TEXTURES];
 	cudaTexture_t *			d_texDesc;
-	int						numTextures;
-	int						textureGeneration;
-	size_t					textureBytes;
+	int		numTextures;
+	int		textureGeneration;
+	size_t	textureBytes;
 };
 
 /*
@@ -377,6 +377,11 @@ bool idPathTracerBackendCUDA::Resize( int width, int height ) {
 	return true;
 }
 
+/*
+========================
+idPathTracerBackendCUDA::FreeDenoiser
+========================
+*/
 void idPathTracerBackendCUDA::FreeDenoiser() {
 	cudaFree( denoiser.radiance );
 	cudaFree( denoiser.scratch );
@@ -400,6 +405,11 @@ void idPathTracerBackendCUDA::FreeDenoiser() {
 	denoiseHistoryValid = false;
 }
 
+/*
+========================
+idPathTracerBackendCUDA::ResizeDenoiser
+========================
+*/
 bool idPathTracerBackendCUDA::ResizeDenoiser( int width, int height ) {
 	if ( width == denoiseWidth && height == denoiseHeight ) return true;
 	PT_CUDA_CHECK( cudaStreamSynchronize( stream ) );
@@ -426,6 +436,11 @@ bool idPathTracerBackendCUDA::ResizeDenoiser( int width, int height ) {
 	return true;
 }
 
+/*
+========================
+idPathTracerBackendCUDA::FreePostprocess
+========================
+*/
 void idPathTracerBackendCUDA::FreePostprocess() {
 	cudaFree( postprocess.highlights );
 	cudaFree( postprocess.scratch );
@@ -435,6 +450,11 @@ void idPathTracerBackendCUDA::FreePostprocess() {
 	postWidth = postHeight = postScale = 0;
 }
 
+/*
+========================
+idPathTracerBackendCUDA::ResizePostprocess
+========================
+*/
 bool idPathTracerBackendCUDA::ResizePostprocess( int width, int height, float radius ) {
 	const int scale = PT_CudaPostprocessScale( height, radius );
 	if ( width == postWidth && height == postHeight && scale == postScale ) return true;
@@ -795,14 +815,27 @@ void idPathTracerBackendCUDA::GetStats( ptBackendStats_t &stats ) const {
 }
 
 /*
+===============================================================================
+
+	Factory
+
+===============================================================================
+*/
+
+/*
 ========================
-Factory
+PT_CUDA_IsAvailable
 ========================
 */
 bool PT_CUDA_IsAvailable() {
 	return idPathTracerBackendCUDA::IsAvailable();
 }
 
+/*
+========================
+PT_CUDA_GetDeviceInfo
+========================
+*/
 bool PT_CUDA_GetDeviceInfo( ptBackendDeviceInfo_t &info ) {
 	int device = 0;
 	cudaDeviceProp props;
@@ -820,6 +853,11 @@ bool PT_CUDA_GetDeviceInfo( ptBackendDeviceInfo_t &info ) {
 	return true;
 }
 
+/*
+========================
+PT_CUDA_CreateBackend
+========================
+*/
 idPathTracerBackend *PT_CUDA_CreateBackend() {
 	return new idPathTracerBackendCUDA();
 }

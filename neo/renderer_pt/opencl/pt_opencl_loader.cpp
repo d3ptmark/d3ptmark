@@ -11,6 +11,12 @@
 #endif
 
 #define PT_CL_DEFINE_POINTER( name ) decltype( &::name ) pt_##name = NULL;
+
+/*
+========================
+PT_CL_FUNCTIONS
+========================
+*/
 PT_CL_FUNCTIONS( PT_CL_DEFINE_POINTER )
 #undef PT_CL_DEFINE_POINTER
 
@@ -29,6 +35,11 @@ static void *PT_CL_OpenLibrary() {
 #endif
 }
 
+/*
+========================
+PT_CL_Symbol
+========================
+*/
 static void *PT_CL_Symbol( void *library, const char *name ) {
 #ifdef _WIN32
 	return (void *)GetProcAddress( (HMODULE)library, name );
@@ -52,7 +63,7 @@ bool PT_CL_Load() {
 	void *library = PT_CL_OpenLibrary();
 	if ( !library ) return false;
 #define PT_CL_RESOLVE( name ) \
-	pt_##name = (decltype( pt_##name ))PT_CL_Symbol( library, #name ); \
+	pt_##name = ( decltype( pt_##name ) )PT_CL_Symbol( library, #name ); \
 	if ( !pt_##name ) return false;
 	PT_CL_FUNCTIONS( PT_CL_RESOLVE )
 #undef PT_CL_RESOLVE

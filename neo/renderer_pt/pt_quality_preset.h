@@ -4,16 +4,16 @@
 #include "idlib/Str.h"
 
 struct ptQualitySettings_t {
-	float renderScale;
-	int samplesPerPixel;
-	int maxDepth;
-	int maxLightSamples;
+	float	renderScale;
+	int		samplesPerPixel;
+	int		maxDepth;
+	int		maxLightSamples;
 };
 
 struct ptQualityPreset_t {
-	const char *name;
-	ptQualitySettings_t settings;
-	const char *customName;
+	const char			*name;
+	ptQualitySettings_t	settings;
+	const char			*customName;
 };
 
 static const ptQualityPreset_t ptQualityPresets[] = {

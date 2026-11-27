@@ -22,9 +22,9 @@
 
 // device-side texture descriptor, built by the backend from ptTextureInfo_t
 struct cudaTexture_t {
-	int width;
-	int height;
-	unsigned char *data;		// RGBA8, NULL when not resident
+	int				width;
+	int				height;
+	unsigned char	*data;	// RGBA8, NULL when not resident
 };
 
 // ptRay_t::flags
@@ -35,62 +35,62 @@ struct cudaTexture_t {
 #define PT_WEAPON_CLEARANCE		32.0f	// rays leaving the weapon ignore world geometry this close
 
 struct ptRay_t {
-	float origin[3];
-	float direction[3];
-	float tMin;
-	float tMax;
-	float worldTMin;			// non-weapon triangles closer than this are ignored
-	int flags;
+	float	origin[3];
+	float	direction[3];
+	float	tMin;
+	float	tMax;
+	float	worldTMin;	// non-weapon triangles closer than this are ignored
+	int		flags;
 };
 
 struct ptHitInfo_t {
-	bool hit;
-	float t;
-	float position[3];
-	float normal[3];
-	float tangent[3];
-	float binormal[3];
-	float texcoord[2];
-	float barycentrics[3];		// (w, u, v)
-	int materialIndex;
-	int triangleIndex;
-	int triFlags;				// ptTriangle_t::flags of the hit triangle
+	bool	hit;
+	float	t;
+	float	position[3];
+	float	normal[3];
+	float	tangent[3];
+	float	binormal[3];
+	float	texcoord[2];
+	float	barycentrics[3];	// (w, u, v)
+	int		materialIndex;
+	int		triangleIndex;
+	int		triFlags;			// ptTriangle_t::flags of the hit triangle
 };
 
 #ifdef __CUDACC__
 // Expands ptRenderParams_t into the local names the kernels were written with.
 #define PT_UNPACK_RENDER_PARAMS( p ) \
-	[[maybe_unused]] const int width = (p).width; \
-	[[maybe_unused]] const int height = (p).height; \
-	[[maybe_unused]] const float *cameraPos = (p).camPos; \
-	[[maybe_unused]] const float *cameraForward = (p).camForward; \
-	[[maybe_unused]] const float *cameraRight = (p).camRight; \
-	[[maybe_unused]] const float *cameraUp = (p).camUp; \
-	[[maybe_unused]] const float fov = (p).fovX; \
-	[[maybe_unused]] const float fovY = (p).fovY; \
-	[[maybe_unused]] const int samplesPerPixel = (p).samplesPerPixel; \
-	[[maybe_unused]] const int maxDepth = (p).maxDepth; \
-	[[maybe_unused]] const int maxLightSamples = (p).maxLightSamples; \
-	[[maybe_unused]] const int frameIndex = (p).frameIndex; \
-	[[maybe_unused]] const float emissionBoost = (p).emissionBoost; \
-	[[maybe_unused]] const float indirectProb = (p).indirectProb; \
-	[[maybe_unused]] const int rrEnabled = (p).rrEnabled; \
-	[[maybe_unused]] const int rrMinBounces = (p).rrMinBounces; \
-	[[maybe_unused]] const float rrSurvivalMin = (p).rrSurvivalMin; \
-	[[maybe_unused]] const float earlyTermThreshold = (p).earlyTermThreshold; \
-	[[maybe_unused]] const float fireflyClamp = (p).fireflyClamp; \
-	[[maybe_unused]] const float throughputClamp = (p).throughputClamp; \
-	[[maybe_unused]] const float rayOffset = (p).rayOffset; \
-	[[maybe_unused]] const float specularBoost = (p).specularBoost; \
-	[[maybe_unused]] const float skyIntensity = (p).skyIntensity; \
-	[[maybe_unused]] const float *skyColorZenith = (p).skyZenith; \
-	[[maybe_unused]] const float *skyColorHorizon = (p).skyHorizon; \
-	[[maybe_unused]] const float *skyColorGround = (p).skyGround; \
-	[[maybe_unused]] const float volumetricDensity = (p).volDensity; \
-	[[maybe_unused]] const int volumetricSteps = (p).volSteps; \
-	[[maybe_unused]] const float volumetricAnisotropy = (p).volAnisotropy; \
-	[[maybe_unused]] const float volFalloff = (p).volFalloff; \
-	[[maybe_unused]] const float volMaxDist = (p).volMaxDist
+	[[maybe_unused]] const int width = ( p ).width; \
+	[[maybe_unused]] const int height = ( p ).height; \
+	[[maybe_unused]] const float *cameraPos = ( p ).camPos; \
+	[[maybe_unused]] const float *cameraForward = ( p ).camForward; \
+	[[maybe_unused]] const float *cameraRight = ( p ).camRight; \
+	[[maybe_unused]] const float *cameraUp = ( p ).camUp; \
+	[[maybe_unused]] const float fov = ( p ).fovX; \
+	[[maybe_unused]] const float fovY = ( p ).fovY; \
+	[[maybe_unused]] const int samplesPerPixel = ( p ).samplesPerPixel; \
+	[[maybe_unused]] const int maxDepth = ( p ).maxDepth; \
+	[[maybe_unused]] const int maxLightSamples = ( p ).maxLightSamples; \
+	[[maybe_unused]] const int frameIndex = ( p ).frameIndex; \
+	[[maybe_unused]] const float emissionBoost = ( p ).emissionBoost; \
+	[[maybe_unused]] const float indirectProb = ( p ).indirectProb; \
+	[[maybe_unused]] const int rrEnabled = ( p ).rrEnabled; \
+	[[maybe_unused]] const int rrMinBounces = ( p ).rrMinBounces; \
+	[[maybe_unused]] const float rrSurvivalMin = ( p ).rrSurvivalMin; \
+	[[maybe_unused]] const float earlyTermThreshold = ( p ).earlyTermThreshold; \
+	[[maybe_unused]] const float fireflyClamp = ( p ).fireflyClamp; \
+	[[maybe_unused]] const float throughputClamp = ( p ).throughputClamp; \
+	[[maybe_unused]] const float rayOffset = ( p ).rayOffset; \
+	[[maybe_unused]] const float specularBoost = ( p ).specularBoost; \
+	[[maybe_unused]] const float skyIntensity = ( p ).skyIntensity; \
+	[[maybe_unused]] const float *skyColorZenith = ( p ).skyZenith; \
+	[[maybe_unused]] const float *skyColorHorizon = ( p ).skyHorizon; \
+	[[maybe_unused]] const float *skyColorGround = ( p ).skyGround; \
+	[[maybe_unused]] const float volumetricDensity = ( p ).volDensity; \
+	[[maybe_unused]] const int volumetricSteps = ( p ).volSteps; \
+	[[maybe_unused]] const float volumetricAnisotropy = ( p ).volAnisotropy; \
+	[[maybe_unused]] const float volFalloff = ( p ).volFalloff; \
+	[[maybe_unused]] const float volMaxDist = ( p ).volMaxDist
 #endif
 
 #ifdef __cplusplus
@@ -105,21 +105,21 @@ typedef struct {
 	const ptMaterial_t *	materials;
 	const cudaTexture_t *	textures;
 	const ptLight_t *		lights;
-	int						numLights;
+	int	numLights;
 } ptCudaSceneView_t;
 
 typedef struct {
-	float normal[3];				// unperturbed surface normal for temporal validation
-	float depth;				// <= 0: no single surface suitable for demodulation
-	float position[3];			// world-space hit position for camera reprojection
-	int materialIndex;
-	float albedo[3];				// bounded modulation color
-	int historyValid;			// dynamic entities have spatial filtering only
-	float shadingNormal[3];
-	float roughness;
-	float specularAlbedo[3];
-	int coverage;				// ptDenoiseCoverage_t
-	float volumeDepth;			// first visible layer, independent of surface eligibility
+	float	normal[3];		// unperturbed surface normal for temporal validation
+	float	depth;			// <= 0: no single surface suitable for demodulation
+	float	position[3];	// world-space hit position for camera reprojection
+	int		materialIndex;
+	float	albedo[3];		// bounded modulation color
+	int		historyValid;	// dynamic entities have spatial filtering only
+	float	shadingNormal[3];
+	float	roughness;
+	float	specularAlbedo[3];
+	int		coverage;		// ptDenoiseCoverage_t
+	float	volumeDepth;	// first visible layer, independent of surface eligibility
 } ptCudaDenoiseGuide_t;
 
 enum ptDenoiseCoverage_t {
@@ -146,18 +146,18 @@ enum ptDenoiseReject_t {
 };
 
 typedef struct {
-	float *radiance;
-	float *history[2];			// realtime: illumination + variance; capture: raw mean RGB + E[luminance^2]
-	float *moments[2];			// float4: luminance, squared luminance, history length, rejection reason
+	float	*radiance;
+	float	*history[2];	// realtime: illumination + variance; capture: raw mean RGB + E[luminance^2]
+	float	*moments[2];	// float4: luminance, squared luminance, history length, rejection reason
 } ptCudaDenoiseSignal_t;
 
 typedef struct {
-	float *radiance;				// full fresh HDR, including emission and volume
-	ptCudaDenoiseSignal_t signals[3];	// diffuse, specular, volume
-	ptCudaDenoiseGuide_t *guides[2];
-	float *scratch;				// float4 illumination + variance
-	float *filteredDiffuse;
-	float *filteredSpecular;
+	float					*radiance;	// full fresh HDR, including emission and volume
+	ptCudaDenoiseSignal_t	signals[3];	// diffuse, specular, volume
+	ptCudaDenoiseGuide_t	*guides[2];
+	float					*scratch;	// float4 illumination + variance
+	float					*filteredDiffuse;
+	float					*filteredSpecular;
 } ptCudaDenoiseBuffers_t;
 
 // traces params.width x params.height into the float4 accumulation buffer
@@ -179,10 +179,10 @@ cudaError_t LaunchDenoisingDebugKernel( const ptCudaDenoiseBuffers_t *buffers, u
 
 // Dedicated display-only storage: never aliases accumulation or denoiser history.
 typedef struct {
-	float *highlights;
-	float *scratch;
-	float *blurred;
-	float *output;
+	float	*highlights;
+	float	*scratch;
+	float	*blurred;
+	float	*output;
 } ptCudaPostprocessBuffers_t;
 
 inline int PT_CudaPostprocessScale( int height, float radius ) {
